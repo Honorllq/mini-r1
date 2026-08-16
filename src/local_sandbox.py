@@ -15,6 +15,7 @@
 
 import ast
 import subprocess
+import sys
 from typing import List, Dict
 
 
@@ -37,7 +38,7 @@ def run_one_test(
     """
     try:
         result = subprocess.run(
-            ["python", "-c", code],   # 启动 python 子进程执行 code
+            [sys.executable, "-c", code],  # 使用当前 Python 环境执行代码
             input=test_input,          # 喂 stdin
             capture_output=True,       # 抓 stdout + stderr
             text=True,                 # 按字符串处理 (不是 bytes)
@@ -108,7 +109,7 @@ def run_humaneval_test(
 
     try:
         result = subprocess.run(
-            ["python", "-c", full_script],
+            [sys.executable, "-c", full_script],
             capture_output=True,
             text=True,
             timeout=timeout,
@@ -191,7 +192,7 @@ def compute_humaneval_pass_rate(
 
     try:
         result = subprocess.run(
-            ["python", "-c", full_script],
+            [sys.executable, "-c", full_script],
             capture_output=True,
             text=True,
             timeout=timeout,
