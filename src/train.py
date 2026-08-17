@@ -10,7 +10,7 @@ GRPO 训练脚本 —— Qwen2.5-Coder-1.5B 在 HumanEval 上用 GRPO 训练
     # 先跑 debug 模式验证不崩 (只跑 2 步, ~5 分钟)
     python src/train.py --debug
 
-    # 正式训练 (全数据, 1 epoch)
+    # 正式训练 (全数据, 2 epochs, v3 最优配方)
     python src/train.py
 
     # 自定义步数
@@ -97,7 +97,7 @@ def main(args):
         max_completion_length=512,
 
         # --- 训练时长 ---
-        num_train_epochs=3,        # v4: 2 → 3, 测试是否已饱和
+        num_train_epochs=args.num_train_epochs,
         max_steps=args.max_steps if args.max_steps > 0 else -1,
 
         # --- 显存优化 ---
@@ -163,6 +163,12 @@ if __name__ == "__main__":
         type=int,
         default=-1,
         help="最多跑多少步 (-1 = 全跑)",
+    )
+    parser.add_argument(
+        "--num_train_epochs",
+        type=int,
+        default=2,
+        help="训练轮数 (默认 2，即实验中的 v3 最优配方)",
     )
     args = parser.parse_args()
 
