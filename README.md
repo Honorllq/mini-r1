@@ -115,8 +115,8 @@ pip install transformers>=4.46 trl>=0.24 peft accelerate datasets bitsandbytes
 # 1. 评测基座 (10-20 min)
 python src/evaluate.py --label baseline
 
-# 2. 训练 v3 最优版 (~4 hours on 4070 Ti)
-python src/train.py --output_dir outputs/grpo_humaneval_v3
+# 2. 训练 v3 最优版：2 epochs (~4 hours on 4070 Ti)
+python src/train.py --num_train_epochs 2 --output_dir outputs/grpo_humaneval_v3
 
 # 3. 评测训练后模型
 python src/evaluate.py \
