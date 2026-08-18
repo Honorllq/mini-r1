@@ -19,6 +19,9 @@ import sys
 from typing import List, Dict
 
 
+_PASS_COUNT_MARKER = "__MINI_R1_PASSED_COUNT__="
+
+
 def run_one_test(
     code: str,
     test_input: str,
@@ -186,7 +189,8 @@ def compute_humaneval_pass_rate(
         script_parts.append(
             f"try:\n    {indented}\n    passed_count += 1\nexcept:\n    pass"
         )
-    script_parts.append("print(passed_count)")
+    # Start the marker on a fresh line so candidate stdout cannot merge with it.
+    script_parts.append(f'print("\\n{_PASS_COUNT_MARKER}" + str(passed_count))')
 
     full_script = "\n".join(script_parts)
 
@@ -205,9 +209,23 @@ def compute_humaneval_pass_rate(
     if result.returncode != 0:
         return 0.0
 
+    marker_line = next(
+        (
+            line
+            for line in reversed(result.stdout.splitlines())
+            if line.startswith(_PASS_COUNT_MARKER)
+        ),
+        None,
+    )
+    if marker_line is None:
+        return 0.0
+
     try:
-        passed = int(result.stdout.strip())
-    except (ValueError, AttributeError):
+        passed = int(marker_line.removeprefix(_PASS_COUNT_MARKER))
+    except ValueError:
+        return 0.0
+
+    if not 0 <= passed <= len(asserts):
         return 0.0
 
     return passed / len(asserts)

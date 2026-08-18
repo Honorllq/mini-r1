@@ -27,7 +27,12 @@ class TestSandboxInterpreter(unittest.TestCase):
 
     @patch("local_sandbox.subprocess.run")
     def test_partial_humaneval_reward_uses_current_interpreter(self, mock_run):
-        mock_run.return_value = subprocess.CompletedProcess([], 0, stdout="1\n", stderr="")
+        mock_run.return_value = subprocess.CompletedProcess(
+            [],
+            0,
+            stdout="__MINI_R1_PASSED_COUNT__=1\n",
+            stderr="",
+        )
 
         score = local_sandbox.compute_humaneval_pass_rate(
             "def f(): return 1",
@@ -37,6 +42,15 @@ class TestSandboxInterpreter(unittest.TestCase):
 
         self.assertEqual(score, 1.0)
         self.assertEqual(mock_run.call_args.args[0][:2], [sys.executable, "-c"])
+
+    def test_partial_humaneval_reward_ignores_candidate_stdout(self):
+        score = local_sandbox.compute_humaneval_pass_rate(
+            'def f():\n    print("debug", end="")\n    return 1',
+            "def check(candidate):\n    assert candidate() == 1",
+            "f",
+        )
+
+        self.assertEqual(score, 1.0)
 
 
 if __name__ == "__main__":
