@@ -30,7 +30,7 @@ class TestSandboxInterpreter(unittest.TestCase):
         mock_run.return_value = subprocess.CompletedProcess(
             [],
             0,
-            stdout="__MINI_R1_PASSED_COUNT__=1\n",
+            stdout="__MINI_R1_PASSED_COUNT__=1/1\n",
             stderr="",
         )
 
@@ -42,6 +42,29 @@ class TestSandboxInterpreter(unittest.TestCase):
 
         self.assertEqual(score, 1.0)
         self.assertEqual(mock_run.call_args.args[0][:2], [sys.executable, "-c"])
+
+    def test_partial_humaneval_reward_preserves_check_setup(self):
+        score = local_sandbox.compute_humaneval_pass_rate(
+            "def f(): return 3",
+            "def check(candidate):\n    expected = 3\n    assert candidate() == expected",
+            "f",
+        )
+
+        self.assertEqual(score, 1.0)
+
+    def test_partial_humaneval_reward_counts_loop_assertions(self):
+        score = local_sandbox.compute_humaneval_pass_rate(
+            "def f(value): return value if value < 2 else -1",
+            (
+                "def check(candidate):\n"
+                "    offset = 0\n"
+                "    for value in range(3):\n"
+                "        assert candidate(value) == value + offset"
+            ),
+            "f",
+        )
+
+        self.assertAlmostEqual(score, 2 / 3)
 
     def test_partial_humaneval_reward_ignores_candidate_stdout(self):
         score = local_sandbox.compute_humaneval_pass_rate(

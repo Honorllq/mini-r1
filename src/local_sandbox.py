@@ -16,10 +16,12 @@
 import ast
 import subprocess
 import sys
-from typing import List, Dict
+from typing import Dict, List, Optional
 
 
 _PASS_COUNT_MARKER = "__MINI_R1_PASSED_COUNT__="
+_PASSED_VAR = "__mini_r1_passed_count"
+_TOTAL_VAR = "__mini_r1_total_count"
 
 
 def run_one_test(
@@ -125,28 +127,96 @@ def run_humaneval_test(
     return result.returncode == 0   # 0 = 所有 assert 通过
 
 
-def _extract_asserts(test_code: str) -> List[str]:
-    """从 HumanEval 的 check() 函数里抠出所有 assert 语句
+class _AssertInstrumenter(ast.NodeTransformer):
+    """把 check() 中实际执行的每个 assert 转成独立计数测试。"""
 
-    例如 test_code 里有:
-        def check(candidate):
-            assert candidate(1, 2) == 3
-            assert candidate(5, 5) == 10
+    def __init__(self):
+        self.assert_count = 0
 
-    返回: ["assert candidate(1, 2) == 3", "assert candidate(5, 5) == 10"]
-    """
+    def visit_Assert(self, node):
+        self.assert_count += 1
+        total_increment = ast.AugAssign(
+            target=ast.Name(id=_TOTAL_VAR, ctx=ast.Store()),
+            op=ast.Add(),
+            value=ast.Constant(value=1),
+        )
+        passed_increment = ast.AugAssign(
+            target=ast.Name(id=_PASSED_VAR, ctx=ast.Store()),
+            op=ast.Add(),
+            value=ast.Constant(value=1),
+        )
+        guarded_assert = ast.Try(
+            body=[node],
+            handlers=[ast.ExceptHandler(type=None, name=None, body=[ast.Pass()])],
+            orelse=[passed_increment],
+            finalbody=[],
+        )
+        return [total_increment, guarded_assert]
+
+    # Nested scopes have their own locals and are not part of check()'s test flow.
+    def visit_FunctionDef(self, node):
+        return node
+
+    def visit_AsyncFunctionDef(self, node):
+        return node
+
+    def visit_ClassDef(self, node):
+        return node
+
+
+def _instrument_humaneval_tests(test_code: str) -> Optional[str]:
+    """保留 check() 的准备语句和控制流，并为断言加入动态计数。"""
     try:
         tree = ast.parse(test_code)
     except SyntaxError:
-        return []
+        return None
 
-    asserts = []
-    for node in ast.walk(tree):
-        if isinstance(node, ast.FunctionDef) and node.name == "check":
-            for stmt in node.body:
-                if isinstance(stmt, ast.Assert):
-                    asserts.append(ast.unparse(stmt))
-    return asserts
+    check_function = next(
+        (
+            node
+            for node in tree.body
+            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+            and node.name == "check"
+        ),
+        None,
+    )
+    if check_function is None or isinstance(check_function, ast.AsyncFunctionDef):
+        return None
+
+    instrumenter = _AssertInstrumenter()
+    transformed_body = []
+    for statement in check_function.body:
+        transformed = instrumenter.visit(statement)
+        if isinstance(transformed, list):
+            transformed_body.extend(transformed)
+        elif transformed is not None:
+            transformed_body.append(transformed)
+
+    if instrumenter.assert_count == 0:
+        return None
+
+    check_function.body = [
+        ast.Assign(
+            targets=[ast.Name(id=_PASSED_VAR, ctx=ast.Store())],
+            value=ast.Constant(value=0),
+        ),
+        ast.Assign(
+            targets=[ast.Name(id=_TOTAL_VAR, ctx=ast.Store())],
+            value=ast.Constant(value=0),
+        ),
+        *transformed_body,
+        ast.Return(
+            value=ast.Tuple(
+                elts=[
+                    ast.Name(id=_PASSED_VAR, ctx=ast.Load()),
+                    ast.Name(id=_TOTAL_VAR, ctx=ast.Load()),
+                ],
+                ctx=ast.Load(),
+            )
+        ),
+    ]
+    ast.fix_missing_locations(tree)
+    return ast.unparse(tree)
 
 
 def compute_humaneval_pass_rate(
@@ -172,25 +242,22 @@ def compute_humaneval_pass_rate(
     Returns:
         float in [0, 1], 通过的 assert 比例
     """
-    asserts = _extract_asserts(test_code)
-    if not asserts:
-        # 抠不出 assert (可能格式特殊), 退回二元判断
+    instrumented_tests = _instrument_humaneval_tests(test_code)
+    if instrumented_tests is None:
+        # 找不到可计数的 assert (可能格式特殊), 退回二元判断
         return 1.0 if run_humaneval_test(code, test_code, entry_point, timeout) else 0.0
 
-    # 构造一个单一脚本, 每个 assert 独立 try/except, 避免一个失败连累后面
+    # 保留原 check() 的 import/赋值/循环, 并让每次实际执行的 assert 独立计分.
     script_parts = [
-        code,                               # 模型的代码
-        f"candidate = {entry_point}",       # 把函数 alias 成 candidate
-        "passed_count = 0",
+        code,
+        instrumented_tests,
+        f"{_PASSED_VAR}, {_TOTAL_VAR} = check({entry_point})",
+        (
+            f'import builtins as __mini_r1_builtins; '
+            f'__mini_r1_builtins.print("\\n{_PASS_COUNT_MARKER}" '
+            f'+ str({_PASSED_VAR}) + "/" + str({_TOTAL_VAR}))'
+        ),
     ]
-    for assert_stmt in asserts:
-        # 把多行 assert 转成带 4 空格缩进的形式
-        indented = "\n    ".join(assert_stmt.split("\n"))
-        script_parts.append(
-            f"try:\n    {indented}\n    passed_count += 1\nexcept:\n    pass"
-        )
-    # Start the marker on a fresh line so candidate stdout cannot merge with it.
-    script_parts.append(f'print("\\n{_PASS_COUNT_MARKER}" + str(passed_count))')
 
     full_script = "\n".join(script_parts)
 
@@ -221,14 +288,16 @@ def compute_humaneval_pass_rate(
         return 0.0
 
     try:
-        passed = int(marker_line.removeprefix(_PASS_COUNT_MARKER))
+        passed_text, total_text = marker_line.removeprefix(_PASS_COUNT_MARKER).split("/", 1)
+        passed = int(passed_text)
+        total = int(total_text)
     except ValueError:
         return 0.0
 
-    if not 0 <= passed <= len(asserts):
+    if total <= 0 or not 0 <= passed <= total:
         return 0.0
 
-    return passed / len(asserts)
+    return passed / total
 
 
 # ========== 自测（python src/local_sandbox.py 就会跑） ==========
