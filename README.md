@@ -106,7 +106,7 @@ conda create -n mini-r1 python=3.10 -y
 conda activate mini-r1
 
 pip install torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cu121
-pip install transformers>=4.46 trl>=0.24 peft accelerate datasets bitsandbytes
+pip install "transformers>=4.56.1,<5.0.0" "trl>=0.24.0,<0.26.0" peft accelerate datasets bitsandbytes
 ```
 
 ### 一键复现
