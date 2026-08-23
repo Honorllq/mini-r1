@@ -9,17 +9,23 @@
 
 替换 Open-R1 rewards.py line 592 的 execution_provider.execute_scripts(...)
 
+安全边界:
+    子进程用于限制崩溃和超时，不是对抗恶意 Python 的安全边界。
+    对不可信代码应再使用容器、低权限账户或专用沙箱。
+
 运行方式:
     python src/local_sandbox.py   # 自测
 """
 
 import ast
+import secrets
 import subprocess
 import sys
 from typing import Dict, List, Optional
 
 
-_PASS_COUNT_MARKER = "__MINI_R1_PASSED_COUNT__="
+_PASS_COUNT_MARKER_PREFIX = "__MINI_R1_PASSED_COUNT__"
+_SUCCESS_MARKER_PREFIX = "__MINI_R1_HUMANEVAL_SUCCESS__"
 _PASSED_VAR = "__mini_r1_passed_count"
 _TOTAL_VAR = "__mini_r1_total_count"
 
@@ -110,7 +116,39 @@ def run_humaneval_test(
     Returns:
         True = 全部通过, False = 失败/超时/报错
     """
-    full_script = f"{code}\n\n{test_code}\n\ncheck({entry_point})\n"
+    success_marker = f"{_SUCCESS_MARKER_PREFIX}:{secrets.token_hex(16)}"
+    success_payload = f"\n{success_marker}\n".encode("ascii")
+    script_parts = [
+        "import builtins as __mini_r1_builtins, os as __mini_r1_os",
+        "__mini_r1_base_exception = __mini_r1_builtins.BaseException",
+        "__mini_r1_compile = __mini_r1_builtins.compile",
+        "__mini_r1_exec = __mini_r1_builtins.exec",
+        "__mini_r1_write = __mini_r1_os.write",
+        "__mini_r1_exit = __mini_r1_os._exit",
+        (
+            '__mini_r1_candidate_globals = {"__builtins__": '
+            '__mini_r1_builtins, "__name__": "__main__"}'
+        ),
+        "try:",
+        (
+            f'    __mini_r1_exec(__mini_r1_compile({code!r}, "<candidate>", '
+            '"exec"), __mini_r1_candidate_globals)'
+        ),
+        (
+            "    __mini_r1_candidate = "
+            f"__mini_r1_candidate_globals[{entry_point!r}]"
+        ),
+        (
+            f'    __mini_r1_exec(__mini_r1_compile({test_code!r}, "<tests>", '
+            '"exec"), __mini_r1_candidate_globals)'
+        ),
+        '    __mini_r1_candidate_globals["check"](__mini_r1_candidate)',
+        "except __mini_r1_base_exception:",
+        "    __mini_r1_exit(1)",
+        f"__mini_r1_write(1, {success_payload!r})",
+        "__mini_r1_exit(0)",
+    ]
+    full_script = "\n".join(script_parts)
 
     try:
         result = subprocess.run(
@@ -124,7 +162,10 @@ def run_humaneval_test(
     except Exception:
         return False
 
-    return result.returncode == 0   # 0 = 所有 assert 通过
+    success_lines = [
+        line for line in result.stdout.splitlines() if line == success_marker
+    ]
+    return result.returncode == 0 and len(success_lines) == 1
 
 
 class _AssertInstrumenter(ast.NodeTransformer):
@@ -247,16 +288,46 @@ def compute_humaneval_pass_rate(
         # 找不到可计数的 assert (可能格式特殊), 退回二元判断
         return 1.0 if run_humaneval_test(code, test_code, entry_point, timeout) else 0.0
 
-    # 保留原 check() 的 import/赋值/循环, 并让每次实际执行的 assert 独立计分.
+    pass_count_marker = f"{_PASS_COUNT_MARKER_PREFIX}:{secrets.token_hex(16)}="
+    pass_count_payload = f"\n{pass_count_marker}%d/%d\n".encode("ascii")
+
+    # 候选代码和测试共享命名空间，以保留 HumanEval helper 函数的语义；
+    # 评分逻辑留在外层，并预先缓存依赖，阻止普通名称覆盖和退出钩子干扰结果。
     script_parts = [
-        code,
-        instrumented_tests,
-        f"{_PASSED_VAR}, {_TOTAL_VAR} = check({entry_point})",
+        "import builtins as __mini_r1_builtins, os as __mini_r1_os",
+        "__mini_r1_base_exception = __mini_r1_builtins.BaseException",
+        "__mini_r1_compile = __mini_r1_builtins.compile",
+        "__mini_r1_exec = __mini_r1_builtins.exec",
+        "__mini_r1_write = __mini_r1_os.write",
+        "__mini_r1_exit = __mini_r1_os._exit",
         (
-            f'import builtins as __mini_r1_builtins; '
-            f'__mini_r1_builtins.print("\\n{_PASS_COUNT_MARKER}" '
-            f'+ str({_PASSED_VAR}) + "/" + str({_TOTAL_VAR}))'
+            '__mini_r1_candidate_globals = {"__builtins__": '
+            '__mini_r1_builtins, "__name__": "__main__"}'
         ),
+        "try:",
+        (
+            f'    __mini_r1_exec(__mini_r1_compile({code!r}, "<candidate>", '
+            '"exec"), __mini_r1_candidate_globals)'
+        ),
+        (
+            "    __mini_r1_candidate = "
+            f"__mini_r1_candidate_globals[{entry_point!r}]"
+        ),
+        (
+            f'    __mini_r1_exec(__mini_r1_compile({instrumented_tests!r}, '
+            '"<tests>", "exec"), __mini_r1_candidate_globals)'
+        ),
+        (
+            f"    {_PASSED_VAR}, {_TOTAL_VAR} = "
+            '__mini_r1_candidate_globals["check"](__mini_r1_candidate)'
+        ),
+        "except __mini_r1_base_exception:",
+        "    __mini_r1_exit(1)",
+        (
+            f"__mini_r1_write(1, {pass_count_payload!r} % "
+            f"({_PASSED_VAR}, {_TOTAL_VAR}))"
+        ),
+        "__mini_r1_exit(0)",
     ]
 
     full_script = "\n".join(script_parts)
@@ -276,19 +347,18 @@ def compute_humaneval_pass_rate(
     if result.returncode != 0:
         return 0.0
 
-    marker_line = next(
-        (
-            line
-            for line in reversed(result.stdout.splitlines())
-            if line.startswith(_PASS_COUNT_MARKER)
-        ),
-        None,
-    )
-    if marker_line is None:
+    marker_lines = [
+        line
+        for line in result.stdout.splitlines()
+        if line.startswith(pass_count_marker)
+    ]
+    if len(marker_lines) != 1:
         return 0.0
 
     try:
-        passed_text, total_text = marker_line.removeprefix(_PASS_COUNT_MARKER).split("/", 1)
+        passed_text, total_text = (
+            marker_lines[0].removeprefix(pass_count_marker).split("/", 1)
+        )
         passed = int(passed_text)
         total = int(total_text)
     except ValueError:
