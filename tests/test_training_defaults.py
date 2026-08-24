@@ -48,6 +48,22 @@ class TestTrainingDefaults(unittest.TestCase):
         self.assertEqual(epoch_value.value.id, "args")
         self.assertEqual(epoch_value.attr, "num_train_epochs")
 
+    def test_grpo_config_explicitly_disables_kl_penalty(self):
+        configs = [
+            node
+            for node in ast.walk(self.tree)
+            if isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Name)
+            and node.func.id == "GRPOConfig"
+        ]
+
+        self.assertEqual(len(configs), 1)
+        values = {keyword.arg: keyword.value for keyword in configs[0].keywords}
+        self.assertIn("beta", values)
+        beta = ast.literal_eval(values["beta"])
+        self.assertIs(type(beta), float)
+        self.assertEqual(beta, 0.0)
+
 
 if __name__ == "__main__":
     unittest.main()

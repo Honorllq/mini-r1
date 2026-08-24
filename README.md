@@ -60,13 +60,11 @@
                │  转 chat 格式 + verification  │
                └──────────────────────────────┘
                               │
-              ┌───────────────┴────────────────┐
-              ▼                                 ▼
-   ┌──────────────────┐          ┌─────────────────────────┐
-   │  Policy Model    │          │  Reference Model         │
-   │  Qwen + LoRA     │ ◀───KL─▶│  Qwen (frozen)           │
-   │  (训练)          │          │  (冻结)                  │
-   └──────────────────┘          └─────────────────────────┘
+              ▼
+   ┌──────────────────────────────────────────────┐
+   │  Policy Model: Qwen + LoRA (训练)             │
+   │  β = 0.0：不加载 Reference Model，无 KL 惩罚   │
+   └──────────────────────────────────────────────┘
               │
               │ 生成 4 个 completion / 题
               ▼
@@ -91,7 +89,7 @@
               ▼
    ┌──────────────────────────────────────────────┐
    │  GRPO 更新 (TRL 0.24)                         │
-   │  组内归一化 → policy gradient + KL 约束       │
+   │  组内归一化 → policy gradient（β=0，无 KL）    │
    └──────────────────────────────────────────────┘
 ```
 
@@ -199,6 +197,7 @@ def compute_humaneval_pass_rate(code, test_code, entry_point) -> float:
 training_args = GRPOConfig(
     learning_rate=1e-5,            # ↑ from 5e-6
     num_train_epochs=2,            # ↑ from 1
+    beta=0.0,                      # 不加载 reference model，无 KL 惩罚
     num_generations=4,             # GRPO group size
     per_device_train_batch_size=1,
     gradient_accumulation_steps=4,
@@ -219,6 +218,8 @@ trainer = GRPOTrainer(
     peft_config=LoraConfig(r=16, lora_alpha=32, ...),
 )
 ```
+
+为稳定复现 v3 配方，`beta=0.0` 被显式固定。TRL 0.24–0.25 在该配置下不加载参考模型，训练目标不包含 KL 惩罚。
 
 ---
 

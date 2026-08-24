@@ -89,6 +89,9 @@ def main(args):
         adam_beta2=0.99,
         weight_decay=0.1,
 
+        # --- GRPO 目标 ---
+        beta=0.0,                         # 复现 v3: 不加载参考模型、不加 KL 惩罚
+
         # --- 小 GPU 关键设置 ---
         per_device_train_batch_size=1,    # 每卡 batch_size
         gradient_accumulation_steps=4,    # 累积 4 步 = 等效 batch 4
@@ -131,7 +134,6 @@ def main(args):
     print("开始训练! 观察以下指标:")
     print("  - reward:      平均奖励 (应该慢慢上升)")
     print("  - reward_std:  同组 completion 的奖励方差")
-    print("  - kl:          和参考模型的 KL 散度")
     print("  - loss:        损失值 (会从 0 开始涨, 这是正常的!)")
     print("=" * 60 + "\n")
 
