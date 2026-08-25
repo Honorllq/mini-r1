@@ -122,7 +122,8 @@ def evaluate(
             "task_id": sample["task_id"],
             "passed": passed,
             "has_code": bool(code),
-            "response": response[:300],   # 只存前 300 字符
+            "response": response,
+            "code": code,
         })
 
     # === 总结 ===
