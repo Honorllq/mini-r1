@@ -3,7 +3,10 @@ import unittest
 from pathlib import Path
 
 
-EVALUATE_SCRIPT = Path(__file__).parents[1] / "src" / "evaluate.py"
+PROJECT_ROOT = Path(__file__).parents[1]
+EVALUATE_SCRIPT = PROJECT_ROOT / "src" / "evaluate.py"
+TRAIN_SCRIPT = PROJECT_ROOT / "src" / "train.py"
+DATA_PREP_SCRIPT = PROJECT_ROOT / "src" / "data_prep.py"
 
 
 class TestEvaluationArtifacts(unittest.TestCase):
@@ -31,6 +34,24 @@ class TestEvaluationArtifacts(unittest.TestCase):
             for key, value in zip(record.keys, record.values)
         }
 
+        summary_assignments = [
+            node.value
+            for node in ast.walk(cls.tree)
+            if isinstance(node, ast.Assign)
+            and len(node.targets) == 1
+            and isinstance(node.targets[0], ast.Name)
+            and node.targets[0].id == "summary"
+            and isinstance(node.value, ast.Dict)
+        ]
+        if len(summary_assignments) != 1:
+            raise AssertionError("expected one summary dictionary")
+
+        summary = summary_assignments[0]
+        cls.summary_fields = {
+            ast.literal_eval(key): value
+            for key, value in zip(summary.keys, summary.values)
+        }
+
     def _assigned_value(self, name: str) -> ast.expr:
         assignments = [
             node.value
@@ -42,6 +63,21 @@ class TestEvaluationArtifacts(unittest.TestCase):
         ]
         self.assertEqual(len(assignments), 1)
         return assignments[0]
+
+    def _single_string_call_argument(self, path: Path, name: str) -> str:
+        tree = ast.parse(path.read_text(encoding="utf-8"))
+        arguments = [
+            node.args[0]
+            for node in ast.walk(tree)
+            if isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Name)
+            and node.func.id == name
+            and node.args
+            and isinstance(node.args[0], ast.Constant)
+            and isinstance(node.args[0].value, str)
+        ]
+        self.assertEqual(len(arguments), 1)
+        return ast.literal_eval(arguments[0])
 
     def test_evaluation_record_preserves_full_response(self):
         response = self.fields["response"]
@@ -81,6 +117,32 @@ class TestEvaluationArtifacts(unittest.TestCase):
         }
         self.assertIsInstance(arguments["code"], ast.Name)
         self.assertEqual(arguments["code"].id, "code")
+
+    def test_summary_labels_reused_training_tasks(self):
+        expected_metadata = {
+            "dataset": "openai/openai_humaneval",
+            "split": "test",
+            "evaluation_scope": "in_sample_same_tasks",
+        }
+        for field, expected in expected_metadata.items():
+            self.assertIn(field, self.summary_fields)
+            self.assertEqual(ast.literal_eval(self.summary_fields[field]), expected)
+
+    def test_scope_metadata_matches_dataset_loaders(self):
+        dataset = ast.literal_eval(self.summary_fields["dataset"])
+        split = ast.literal_eval(self.summary_fields["split"])
+        self.assertEqual(
+            self._single_string_call_argument(DATA_PREP_SCRIPT, "load_dataset"),
+            dataset,
+        )
+        self.assertEqual(
+            self._single_string_call_argument(TRAIN_SCRIPT, "load_humaneval"),
+            split,
+        )
+        self.assertEqual(
+            self._single_string_call_argument(EVALUATE_SCRIPT, "load_humaneval"),
+            split,
+        )
 
 
 if __name__ == "__main__":

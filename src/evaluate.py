@@ -132,6 +132,9 @@ def evaluate(
         "model": model_name,
         "lora_path": lora_path,
         "label": label,
+        "dataset": "openai/openai_humaneval",
+        "split": "test",
+        "evaluation_scope": "in_sample_same_tasks",
         "num_samples": len(ds),
         "passed": passed_count,
         "no_code": no_code_count,
@@ -151,6 +154,7 @@ def evaluate(
     print(f"模型:        {model_name}")
     if lora_path:
         print(f"LoRA:        {lora_path}")
+    print("范围:        in-sample (与项目训练使用相同 HumanEval 任务)")
     print(f"题数:        {len(ds)}")
     print(f"通过:        {passed_count}")
     print(f"无代码:      {no_code_count}")
