@@ -34,6 +34,17 @@ from reward_funcs import extract_code
 from local_sandbox import run_humaneval_test
 
 
+def _positive_int(value: str) -> int:
+    """Parse a strictly positive integer for CLI sample counts."""
+    try:
+        parsed = int(value)
+    except ValueError as exc:
+        raise argparse.ArgumentTypeError("must be an integer greater than 0") from exc
+    if parsed <= 0:
+        raise argparse.ArgumentTypeError("must be greater than 0")
+    return parsed
+
+
 def evaluate(
     model_name: str,
     lora_path: str | None = None,
@@ -47,11 +58,16 @@ def evaluate(
     Args:
         model_name: HF 模型名 (基座)
         lora_path: 如果有 LoRA, 给路径
-        num_samples: 评多少题, 最多 164
+        num_samples: 评多少题, 必须是大于 0 的整数, 最多 164
         max_new_tokens: 生成最大 token 数
         label: 标签, 用于保存结果文件名
         output_dir: 结果保存目录
     """
+    if isinstance(num_samples, bool) or not isinstance(num_samples, int):
+        raise TypeError("num_samples must be an integer")
+    if num_samples <= 0:
+        raise ValueError("num_samples must be greater than 0")
+
     # === 加载模型 ===
     print(f"\n[1/3] 加载模型: {model_name}")
     model = AutoModelForCausalLM.from_pretrained(
@@ -179,9 +195,9 @@ def main():
     )
     parser.add_argument(
         "--num_samples",
-        type=int,
+        type=_positive_int,
         default=164,
-        help="评多少题 (默认全部 164)",
+        help="评多少题，必须大于 0 (默认全部 164)",
     )
     parser.add_argument(
         "--max_new_tokens",
