@@ -32,6 +32,19 @@ from data_prep import load_humaneval
 from reward_funcs import code_reward_humaneval_partial, format_reward
 
 
+def _parse_max_steps(value: str) -> int:
+    """Accept the Trainer sentinel (-1) or a positive step limit."""
+    try:
+        parsed = int(value)
+    except ValueError as exc:
+        raise argparse.ArgumentTypeError(
+            "must be -1 or a positive integer"
+        ) from exc
+    if parsed == -1 or parsed > 0:
+        return parsed
+    raise argparse.ArgumentTypeError("must be -1 or a positive integer")
+
+
 def main(args):
     # =========================================================================
     # Step 1: 加载模型 + tokenizer
@@ -101,7 +114,7 @@ def main(args):
 
         # --- 训练时长 ---
         num_train_epochs=args.num_train_epochs,
-        max_steps=args.max_steps if args.max_steps > 0 else -1,
+        max_steps=args.max_steps,
 
         # --- 显存优化 ---
         bf16=True,
@@ -162,9 +175,9 @@ if __name__ == "__main__":
     )
     parser.add_argument(
         "--max_steps",
-        type=int,
+        type=_parse_max_steps,
         default=-1,
-        help="最多跑多少步 (-1 = 全跑)",
+        help="最多跑多少步，必须为正整数或 -1 (-1 = 全跑)",
     )
     parser.add_argument(
         "--num_train_epochs",
