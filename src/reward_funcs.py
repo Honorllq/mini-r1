@@ -32,6 +32,18 @@ sys.path.insert(0, str(Path(__file__).parent))
 from local_sandbox import compute_pass_rate, run_humaneval_test, compute_humaneval_pass_rate
 
 
+def _pair_completions_with_metadata(completions, verification_info):
+    """Pair aligned reward inputs without silently dropping samples."""
+    completion_count = len(completions)
+    metadata_count = len(verification_info)
+    if completion_count != metadata_count:
+        raise ValueError(
+            "completions and verification_info must have the same length "
+            f"(got {completion_count} and {metadata_count})"
+        )
+    return zip(completions, verification_info)
+
+
 # ========== Reward 1: 代码正确性 ==========
 
 def extract_code(completion_text: str) -> str:
@@ -56,9 +68,10 @@ def code_reward(completions, **kwargs) -> List[float]:
     - 部分通过 → 0.x
     """
     verification_info = kwargs["verification_info"]
+    pairs = _pair_completions_with_metadata(completions, verification_info)
     rewards = []
 
-    for completion, info in zip(completions, verification_info):
+    for completion, info in pairs:
         text = completion[-1]["content"]      # 取 assistant 回答内容
         code = extract_code(text)
 
@@ -85,9 +98,10 @@ def code_reward_humaneval(completions, **kwargs) -> List[float]:
         {"test_code": "def check(candidate): ...", "entry_point": "函数名"}
     """
     verification_info = kwargs["verification_info"]
+    pairs = _pair_completions_with_metadata(completions, verification_info)
     rewards = []
 
-    for completion, info in zip(completions, verification_info):
+    for completion, info in pairs:
         text = completion[-1]["content"]
         code = extract_code(text)
 
@@ -119,9 +133,10 @@ def code_reward_humaneval_partial(completions, **kwargs) -> List[float]:
       - 给"接近对"的答案部分分, 梯度信号更丰富
     """
     verification_info = kwargs["verification_info"]
+    pairs = _pair_completions_with_metadata(completions, verification_info)
     rewards = []
 
-    for completion, info in zip(completions, verification_info):
+    for completion, info in pairs:
         text = completion[-1]["content"]
         code = extract_code(text)
 
