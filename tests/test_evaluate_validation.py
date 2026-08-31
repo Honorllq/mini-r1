@@ -75,6 +75,34 @@ class TestEvaluateInputValidation(unittest.TestCase):
 
         model_loader.assert_not_called()
 
+    def test_evaluate_rejects_non_positive_generation_lengths_before_model_load(self):
+        module, model_loader = _load_evaluate_module()
+
+        for max_new_tokens in (0, -1):
+            with self.subTest(max_new_tokens=max_new_tokens):
+                with self.assertRaisesRegex(
+                    ValueError, "max_new_tokens must be greater than 0"
+                ):
+                    module.evaluate(
+                        "unused-model", max_new_tokens=max_new_tokens
+                    )
+
+        model_loader.assert_not_called()
+
+    def test_evaluate_rejects_non_integer_generation_lengths_before_model_load(self):
+        module, model_loader = _load_evaluate_module()
+
+        for max_new_tokens in (True, 1.5, None, "1"):
+            with self.subTest(max_new_tokens=max_new_tokens):
+                with self.assertRaisesRegex(
+                    TypeError, "max_new_tokens must be an integer"
+                ):
+                    module.evaluate(
+                        "unused-model", max_new_tokens=max_new_tokens
+                    )
+
+        model_loader.assert_not_called()
+
     def test_cli_rejects_invalid_sample_counts(self):
         module, _ = _load_evaluate_module()
 
@@ -100,6 +128,34 @@ class TestEvaluateInputValidation(unittest.TestCase):
                 module.main()
 
         self.assertEqual(evaluate.call_args.kwargs["num_samples"], 1)
+
+    def test_cli_rejects_invalid_generation_lengths(self):
+        module, _ = _load_evaluate_module()
+
+        for max_new_tokens in ("0", "-1", "1.5", "abc", ""):
+            with self.subTest(max_new_tokens=max_new_tokens):
+                with mock.patch.object(
+                    sys,
+                    "argv",
+                    ["evaluate.py", "--max_new_tokens", max_new_tokens],
+                ):
+                    with mock.patch.object(module, "evaluate") as evaluate:
+                        with mock.patch("sys.stderr", new=io.StringIO()):
+                            with self.assertRaises(SystemExit) as raised:
+                                module.main()
+                self.assertEqual(raised.exception.code, 2)
+                evaluate.assert_not_called()
+
+    def test_cli_accepts_positive_generation_length(self):
+        module, _ = _load_evaluate_module()
+
+        with mock.patch.object(
+            sys, "argv", ["evaluate.py", "--max_new_tokens", "1"]
+        ):
+            with mock.patch.object(module, "evaluate") as evaluate:
+                module.main()
+
+        self.assertEqual(evaluate.call_args.kwargs["max_new_tokens"], 1)
 
 
 if __name__ == "__main__":

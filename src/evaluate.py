@@ -35,7 +35,7 @@ from local_sandbox import run_humaneval_test
 
 
 def _positive_int(value: str) -> int:
-    """Parse a strictly positive integer for CLI sample counts."""
+    """Parse a strictly positive integer for CLI count arguments."""
     try:
         parsed = int(value)
     except ValueError as exc:
@@ -43,6 +43,14 @@ def _positive_int(value: str) -> int:
     if parsed <= 0:
         raise argparse.ArgumentTypeError("must be greater than 0")
     return parsed
+
+
+def _validate_positive_int(value: object, name: str) -> None:
+    """Reject invalid API values before loading evaluation resources."""
+    if isinstance(value, bool) or not isinstance(value, int):
+        raise TypeError(f"{name} must be an integer")
+    if value <= 0:
+        raise ValueError(f"{name} must be greater than 0")
 
 
 def evaluate(
@@ -63,10 +71,8 @@ def evaluate(
         label: 标签, 用于保存结果文件名
         output_dir: 结果保存目录
     """
-    if isinstance(num_samples, bool) or not isinstance(num_samples, int):
-        raise TypeError("num_samples must be an integer")
-    if num_samples <= 0:
-        raise ValueError("num_samples must be greater than 0")
+    _validate_positive_int(num_samples, "num_samples")
+    _validate_positive_int(max_new_tokens, "max_new_tokens")
 
     # === 加载模型 ===
     print(f"\n[1/3] 加载模型: {model_name}")
@@ -201,8 +207,9 @@ def main():
     )
     parser.add_argument(
         "--max_new_tokens",
-        type=int,
+        type=_positive_int,
         default=512,
+        help="生成最大 token 数，必须大于 0",
     )
     parser.add_argument(
         "--label",
