@@ -15,7 +15,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent))
 from data_prep import load_humaneval
-from reward_funcs import code_reward_humaneval, format_reward
+from reward_funcs import code_reward_humaneval_partial, format_reward
 
 
 def fake_model_output(canonical_solution: str, prompt: str, with_format: bool = True) -> str:
@@ -39,7 +39,8 @@ I'll solve this step by step.
         return f"```python\n{full_code}\n```"
 
 
-if __name__ == "__main__":
+def main() -> int:
+    failed_checks = 0
     print("加载 HumanEval (前 3 道题)...")
     ds = load_humaneval("test").select(range(3))
 
@@ -60,36 +61,61 @@ if __name__ == "__main__":
     verification_info = [ds[i]["verification_info"] for i in range(3)]
 
     print("\n" + "=" * 60)
-    print("测试 1: code_reward_humaneval (拿官方答案测, 应该全 1.0)")
+    print("测试 1: code_reward_humaneval_partial (官方答案应该全 1.0)")
     print("=" * 60)
-    scores = code_reward_humaneval(fake_completions, verification_info=verification_info)
-    for i, s in enumerate(scores):
-        status = "[PASS]" if s == 1.0 else "[FAIL]"
+    scores = code_reward_humaneval_partial(
+        fake_completions,
+        verification_info=verification_info,
+    )
+    expected_scores = [1.0] * len(fake_completions)
+    for i, (s, expected) in enumerate(zip(scores, expected_scores)):
+        passed = s == expected
+        status = "[PASS]" if passed else "[FAIL]"
         print(f"  {status} Task {ds[i]['task_id']}: reward = {s:.2f}")
+    if scores != expected_scores:
+        print(f"  [FAIL] 期望 rewards={expected_scores}, 实际 {scores}")
+        failed_checks += 1
 
     print("\n" + "=" * 60)
     print("测试 2: format_reward (都按格式写的, 应该全 0.5)")
     print("=" * 60)
     scores = format_reward(fake_completions)
-    for i, s in enumerate(scores):
-        status = "[PASS]" if s == 0.5 else "[FAIL]"
+    expected_scores = [0.5] * len(fake_completions)
+    for i, (s, expected) in enumerate(zip(scores, expected_scores)):
+        passed = s == expected
+        status = "[PASS]" if passed else "[FAIL]"
         print(f"  {status} Task {ds[i]['task_id']}: reward = {s}")
+    if scores != expected_scores:
+        print(f"  [FAIL] 期望 rewards={expected_scores}, 实际 {scores}")
+        failed_checks += 1
 
     print("\n" + "=" * 60)
-    print("测试 3: 故意写错的代码 (改 return True → return False)")
+    print("测试 3: 故意写错的代码 (必然报错的负对照)")
     print("=" * 60)
     wrong_completion = [[{"role": "assistant", "content": """<reasoning>test</reasoning>
 <answer>
 ```python
 def has_close_elements(numbers, threshold):
-    return False   # 故意总是返回 False
+    raise RuntimeError("negative control")
 ```
 </answer>"""}]]
-    scores = code_reward_humaneval(
+    scores = code_reward_humaneval_partial(
         wrong_completion,
         verification_info=[verification_info[0]],
     )
-    print(f"  期望 0.0, 实际 {scores[0]}")
-    print(f"  {'[PASS]' if scores[0] == 0.0 else '[FAIL]'}")
+    passed = scores == [0.0]
+    print(f"  期望 [0.0], 实际 {scores}")
+    print(f"  {'[PASS]' if passed else '[FAIL]'}")
+    if not passed:
+        failed_checks += 1
+
+    if failed_checks:
+        print(f"\n[FAIL] 端到端测试失败 ({failed_checks} 项)")
+        return 1
 
     print("\n[OK] 端到端测试完成!")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
