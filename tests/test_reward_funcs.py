@@ -164,5 +164,85 @@ class TestRewardBatchAlignment(unittest.TestCase):
             sandbox_function.assert_not_called()
 
 
+class TestFormatReward(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        cls.module, _ = _load_reward_funcs_module()
+
+    @staticmethod
+    def _completion_with_text(text: str) -> list[dict[str, str]]:
+        return [{"role": "assistant", "content": text}]
+
+    def assert_format_score(self, text: str, expected: float):
+        rewards = self.module.format_reward([self._completion_with_text(text)])
+        self.assertEqual(rewards, [expected])
+
+    def test_accepts_one_canonical_block_with_optional_outer_whitespace(self):
+        valid_outputs = (
+            "<reasoning>work</reasoning><answer>result</answer>",
+            " \n\t<reasoning>work</reasoning><answer>result</answer>\r\n ",
+        )
+
+        for output in valid_outputs:
+            with self.subTest(output=output):
+                self.assert_format_score(output, 0.5)
+
+    def test_preserves_reward_for_empty_sections(self):
+        self.assert_format_score(
+            "<reasoning></reasoning><answer></answer>",
+            0.5,
+        )
+
+    def test_rejects_non_whitespace_outside_or_multiple_complete_blocks(self):
+        invalid_outputs = (
+            "prefix<reasoning>work</reasoning><answer>result</answer>",
+            "<reasoning>work</reasoning><answer>result</answer>suffix",
+            (
+                "<reasoning>first</reasoning><answer>one</answer>"
+                "<reasoning>second</reasoning><answer>two</answer>"
+            ),
+        )
+
+        for output in invalid_outputs:
+            with self.subTest(output=output):
+                self.assert_format_score(output, 0.0)
+
+    def test_rejects_nested_or_crossed_structural_tags(self):
+        invalid_outputs = (
+            (
+                "<reasoning>outer <reasoning>inner</reasoning></reasoning>"
+                "<answer>result</answer>"
+            ),
+            (
+                "<reasoning>work</reasoning>"
+                "<answer>outer <answer>inner</answer></answer>"
+            ),
+            (
+                "<reasoning>work <answer>crossed</reasoning>"
+                "<answer>result</answer>"
+            ),
+            (
+                "<reasoning>work</reasoning>"
+                "<answer>result </reasoning> crossed</answer>"
+            ),
+            (
+                "<reasoning>work <answer >nested</answer > continued</reasoning>"
+                "<answer>result</answer>"
+            ),
+            (
+                "<reasoning>work</reasoning>"
+                "<answer>result <answer\n>nested</answer\n></answer>"
+            ),
+            (
+                "<reasoning>work</reasoning>"
+                "<answer><answer data-x='1'>nested</answer>"
+            ),
+        )
+
+        for output in invalid_outputs:
+            with self.subTest(output=output):
+                self.assert_format_score(output, 0.0)
+
+
 if __name__ == "__main__":
     unittest.main()

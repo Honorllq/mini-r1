@@ -32,6 +32,13 @@ sys.path.insert(0, str(Path(__file__).parent))
 from local_sandbox import compute_pass_rate, run_humaneval_test, compute_humaneval_pass_rate
 
 
+_FORMAT_PATTERN = re.compile(
+    r"\s*<reasoning>(?:(?!</?(?:reasoning|answer)(?=[\s/>])).)*</reasoning>"
+    r"\s*<answer>(?:(?!</?(?:reasoning|answer)(?=[\s/>])).)*</answer>\s*",
+    re.DOTALL,
+)
+
+
 def _pair_completions_with_metadata(completions, verification_info):
     """Pair aligned reward inputs without silently dropping samples."""
     completion_count = len(completions)
@@ -159,18 +166,18 @@ def code_reward_humaneval_partial(completions, **kwargs) -> List[float]:
 def format_reward(completions, **kwargs) -> List[float]:
     """格式奖励: 鼓励 <reasoning>...</reasoning><answer>...</answer> 结构
 
-    - 有完整格式 → 0.5
+    - 整个回答符合单一完整格式 (首尾可有空白) → 0.5
+    - 额外文本、重复区块或嵌套结构标签 → 0.0
     - 没有格式 → 0.0
 
     这个 reward 分值故意比 code_reward 小 (max 0.5 vs max 1.0),
     避免模型为了格式分而放弃做对题目。
     """
-    pattern = r"<reasoning>.*?</reasoning>\s*<answer>.*?</answer>"
     rewards = []
 
     for completion in completions:
         text = completion[-1]["content"]
-        if re.search(pattern, text, re.DOTALL):
+        if _FORMAT_PATTERN.fullmatch(text):
             rewards.append(0.5)
         else:
             rewards.append(0.0)
