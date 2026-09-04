@@ -125,6 +125,7 @@ def run_humaneval_test(
         "__mini_r1_exec = __mini_r1_builtins.exec",
         "__mini_r1_write = __mini_r1_os.write",
         "__mini_r1_exit = __mini_r1_os._exit",
+        "__mini_r1_pristine_builtins = __mini_r1_builtins.__dict__.copy()",
         (
             '__mini_r1_candidate_globals = {"__builtins__": '
             '__mini_r1_builtins, "__name__": "__main__"}'
@@ -138,11 +139,26 @@ def run_humaneval_test(
             "    __mini_r1_candidate = "
             f"__mini_r1_candidate_globals[{entry_point!r}]"
         ),
+        "    for __mini_r1_name in __mini_r1_builtins.__dict__.copy():",
+        "        if __mini_r1_name not in __mini_r1_pristine_builtins:",
+        "            del __mini_r1_builtins.__dict__[__mini_r1_name]",
+        (
+            "    __mini_r1_builtins.__dict__.update("
+            "__mini_r1_pristine_builtins)"
+        ),
+        "    __mini_r1_test_globals = __mini_r1_candidate_globals.copy()",
+        "    for __mini_r1_name in __mini_r1_pristine_builtins:",
+        "        __mini_r1_test_globals.pop(__mini_r1_name, None)",
+        (
+            '    __mini_r1_test_globals["__builtins__"] = '
+            "__mini_r1_pristine_builtins.copy()"
+        ),
+        '    __mini_r1_test_globals["__name__"] = "__main__"',
         (
             f'    __mini_r1_exec(__mini_r1_compile({test_code!r}, "<tests>", '
-            '"exec"), __mini_r1_candidate_globals)'
+            '"exec"), __mini_r1_test_globals)'
         ),
-        '    __mini_r1_candidate_globals["check"](__mini_r1_candidate)',
+        '    __mini_r1_test_globals["check"](__mini_r1_candidate)',
         "except __mini_r1_base_exception:",
         "    __mini_r1_exit(1)",
         f"__mini_r1_write(1, {success_payload!r})",
@@ -291,7 +307,7 @@ def compute_humaneval_pass_rate(
     pass_count_marker = f"{_PASS_COUNT_MARKER_PREFIX}:{secrets.token_hex(16)}="
     pass_count_payload = f"\n{pass_count_marker}%d/%d\n".encode("ascii")
 
-    # 候选代码和测试共享命名空间，以保留 HumanEval helper 函数的语义；
+    # 测试命名空间复制候选 helper，但移除同名覆盖并使用独立的 builtins 快照；
     # 评分逻辑留在外层，并预先缓存依赖，阻止普通名称覆盖和退出钩子干扰结果。
     script_parts = [
         "import builtins as __mini_r1_builtins, os as __mini_r1_os",
@@ -300,6 +316,7 @@ def compute_humaneval_pass_rate(
         "__mini_r1_exec = __mini_r1_builtins.exec",
         "__mini_r1_write = __mini_r1_os.write",
         "__mini_r1_exit = __mini_r1_os._exit",
+        "__mini_r1_pristine_builtins = __mini_r1_builtins.__dict__.copy()",
         (
             '__mini_r1_candidate_globals = {"__builtins__": '
             '__mini_r1_builtins, "__name__": "__main__"}'
@@ -313,13 +330,28 @@ def compute_humaneval_pass_rate(
             "    __mini_r1_candidate = "
             f"__mini_r1_candidate_globals[{entry_point!r}]"
         ),
+        "    for __mini_r1_name in __mini_r1_builtins.__dict__.copy():",
+        "        if __mini_r1_name not in __mini_r1_pristine_builtins:",
+        "            del __mini_r1_builtins.__dict__[__mini_r1_name]",
+        (
+            "    __mini_r1_builtins.__dict__.update("
+            "__mini_r1_pristine_builtins)"
+        ),
+        "    __mini_r1_test_globals = __mini_r1_candidate_globals.copy()",
+        "    for __mini_r1_name in __mini_r1_pristine_builtins:",
+        "        __mini_r1_test_globals.pop(__mini_r1_name, None)",
+        (
+            '    __mini_r1_test_globals["__builtins__"] = '
+            "__mini_r1_pristine_builtins.copy()"
+        ),
+        '    __mini_r1_test_globals["__name__"] = "__main__"',
         (
             f'    __mini_r1_exec(__mini_r1_compile({instrumented_tests!r}, '
-            '"<tests>", "exec"), __mini_r1_candidate_globals)'
+            '"<tests>", "exec"), __mini_r1_test_globals)'
         ),
         (
             f"    {_PASSED_VAR}, {_TOTAL_VAR} = "
-            '__mini_r1_candidate_globals["check"](__mini_r1_candidate)'
+            '__mini_r1_test_globals["check"](__mini_r1_candidate)'
         ),
         "except __mini_r1_base_exception:",
         "    __mini_r1_exit(1)",
