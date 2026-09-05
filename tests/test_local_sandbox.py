@@ -234,6 +234,113 @@ class TestSandboxInterpreter(unittest.TestCase):
 
         self.assertAlmostEqual(score, 2 / 3)
 
+    def test_partial_humaneval_reward_counts_loop_case_errors(self):
+        score = local_sandbox.compute_humaneval_pass_rate(
+            (
+                "def f(value):\n"
+                "    if value == 1:\n"
+                "        raise ValueError('bad case')\n"
+                "    return value"
+            ),
+            (
+                "def check(candidate):\n"
+                "    for value in range(3):\n"
+                "        actual = candidate(value)\n"
+                "        assert actual == value"
+            ),
+            "f",
+        )
+
+        self.assertAlmostEqual(score, 2 / 3)
+
+    def test_partial_humaneval_reward_preserves_user_exception_handling(self):
+        score = local_sandbox.compute_humaneval_pass_rate(
+            (
+                "def f(value):\n"
+                "    if value == 1:\n"
+                "        raise ValueError('bad case')\n"
+                "    return value"
+            ),
+            (
+                "def check(candidate):\n"
+                "    for value in range(3):\n"
+                "        try:\n"
+                "            actual = candidate(value)\n"
+                "            assert actual == value\n"
+                "        except ValueError:\n"
+                "            assert value == 1"
+            ),
+            "f",
+        )
+
+        self.assertEqual(score, 1.0)
+
+    def test_partial_humaneval_reward_fails_asserts_dependent_on_case_setup(self):
+        score = local_sandbox.compute_humaneval_pass_rate(
+            (
+                "def f(value):\n"
+                "    if value == 1:\n"
+                "        raise ValueError('bad case')\n"
+                "    return value"
+            ),
+            (
+                "def check(candidate):\n"
+                "    for value in range(3):\n"
+                "        actual = candidate(value)\n"
+                "        assert actual == value\n"
+                "        assert actual >= 0"
+            ),
+            "f",
+        )
+
+        self.assertAlmostEqual(score, 4 / 6)
+
+    def test_partial_humaneval_reward_runs_independent_consecutive_asserts(self):
+        score = local_sandbox.compute_humaneval_pass_rate(
+            (
+                "def f(value):\n"
+                "    if value == 1:\n"
+                "        raise ValueError('bad case')\n"
+                "    return value"
+            ),
+            (
+                "def check(candidate):\n"
+                "    for value in range(3):\n"
+                "        actual = candidate(value)\n"
+                "        assert actual == value\n"
+                "        assert value >= 0"
+            ),
+            "f",
+        )
+
+        self.assertAlmostEqual(score, 5 / 6)
+
+    @unittest.skipUnless(
+        sys.version_info >= (3, 11),
+        "requires except* syntax",
+    )
+    def test_partial_humaneval_reward_preserves_user_exception_groups(self):
+        score = local_sandbox.compute_humaneval_pass_rate(
+            (
+                "def f(value):\n"
+                "    if value == 1:\n"
+                "        raise ValueError('bad case')\n"
+                "    return value"
+            ),
+            (
+                "def check(candidate):\n"
+                "    for value in range(3):\n"
+                "        try:\n"
+                "            actual = candidate(value)\n"
+                "            assert actual == value\n"
+                "        except* ValueError:\n"
+                "            assert value == 1"
+            ),
+            "f",
+        )
+
+        self.assertEqual(score, 1.0)
+
     def test_partial_humaneval_reward_ignores_candidate_stdout(self):
         score = local_sandbox.compute_humaneval_pass_rate(
             'def f():\n    print("debug", end="")\n    return 1',

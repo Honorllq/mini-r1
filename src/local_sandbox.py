@@ -184,41 +184,239 @@ def run_humaneval_test(
     return result.returncode == 0 and len(success_lines) == 1
 
 
-class _AssertInstrumenter(ast.NodeTransformer):
+class _AssertInstrumenter:
     """把 check() 中实际执行的每个 assert 转成独立计数测试。"""
 
-    def __init__(self):
-        self.assert_count = 0
+    _ASSIGNMENT_NODES = (ast.Assign, ast.AnnAssign, ast.AugAssign)
+    _NESTED_SCOPE_NODES = (
+        ast.FunctionDef,
+        ast.AsyncFunctionDef,
+        ast.ClassDef,
+        ast.Lambda,
+    )
+    _TRY_NODES = (ast.Try,)
+    if hasattr(ast, "TryStar"):
+        _TRY_NODES += (getattr(ast, "TryStar"),)
 
-    def visit_Assert(self, node):
+    def __init__(self, candidate_name: str, existing_names):
+        self.candidate_name = candidate_name
+        self.existing_names = set(existing_names)
+        self.assert_count = 0
+        self.validity_count = 0
+
+    def instrument_block(
+        self,
+        statements: List[ast.stmt],
+        allow_setup_guard: bool = True,
+    ) -> List[ast.stmt]:
+        """Instrument direct candidate setup followed by related asserts."""
+        transformed = []
+        index = 0
+
+        while index < len(statements):
+            statement = statements[index]
+            self._instrument_nested_blocks(statement, allow_setup_guard)
+
+            if (
+                allow_setup_guard
+                and isinstance(statement, self._ASSIGNMENT_NODES)
+                and getattr(statement, "value", None) is not None
+            ):
+                stored_names = self._stored_names(statement)
+                loaded_names = self._assignment_loaded_names(statement)
+                assert_end = index + 1
+                assertions = []
+                while (
+                    assert_end < len(statements)
+                    and isinstance(statements[assert_end], ast.Assert)
+                ):
+                    assertions.append(statements[assert_end])
+                    assert_end += 1
+
+                has_related_assert = any(
+                    stored_names & self._loaded_names(assertion.test)
+                    for assertion in assertions
+                )
+                if (
+                    stored_names
+                    and self.candidate_name in loaded_names
+                    and has_related_assert
+                ):
+                    transformed.extend(
+                        self._guard_case_setup(
+                            statement,
+                            assertions,
+                            stored_names,
+                        )
+                    )
+                    index = assert_end
+                    continue
+
+            if isinstance(statement, ast.Assert):
+                transformed.extend(self._guard_assert(statement))
+            else:
+                transformed.append(statement)
+            index += 1
+
+        return transformed
+
+    def _instrument_nested_blocks(
+        self,
+        node: ast.AST,
+        allow_setup_guard: bool,
+    ) -> None:
+        """Recurse through control flow without entering nested scopes."""
+        if isinstance(node, self._NESTED_SCOPE_NODES):
+            return
+
+        if isinstance(node, self._TRY_NODES):
+            node.body = self.instrument_block(
+                node.body,
+                allow_setup_guard=False,
+            )
+            for handler in node.handlers:
+                handler.body = self.instrument_block(
+                    handler.body,
+                    allow_setup_guard=allow_setup_guard,
+                )
+            node.orelse = self.instrument_block(
+                node.orelse,
+                allow_setup_guard=allow_setup_guard,
+            )
+            node.finalbody = self.instrument_block(
+                node.finalbody,
+                allow_setup_guard=allow_setup_guard,
+            )
+            return
+
+        if isinstance(node, (ast.With, ast.AsyncWith)):
+            node.body = self.instrument_block(
+                node.body,
+                allow_setup_guard=False,
+            )
+            return
+
+        for field, value in ast.iter_fields(node):
+            if isinstance(value, list):
+                if all(isinstance(item, ast.stmt) for item in value):
+                    setattr(
+                        node,
+                        field,
+                        self.instrument_block(value, allow_setup_guard),
+                    )
+                else:
+                    for item in value:
+                        if isinstance(item, ast.AST):
+                            self._instrument_nested_blocks(
+                                item,
+                                allow_setup_guard,
+                            )
+            elif isinstance(value, ast.AST):
+                self._instrument_nested_blocks(value, allow_setup_guard)
+
+    @staticmethod
+    def _loaded_names(node: ast.AST):
+        return {
+            child.id
+            for child in ast.walk(node)
+            if isinstance(child, ast.Name) and isinstance(child.ctx, ast.Load)
+        }
+
+    @staticmethod
+    def _stored_names(node: ast.AST):
+        targets = []
+        if isinstance(node, ast.Assign):
+            targets = node.targets
+        elif isinstance(node, (ast.AnnAssign, ast.AugAssign)):
+            targets = [node.target]
+
+        return {
+            child.id
+            for target in targets
+            for child in ast.walk(target)
+            if isinstance(child, ast.Name) and isinstance(child.ctx, ast.Store)
+        }
+
+    def _assignment_loaded_names(self, node: ast.AST):
+        value = getattr(node, "value", None)
+        loaded_names = self._loaded_names(value) if value is not None else set()
+        if isinstance(node, ast.AugAssign):
+            loaded_names.update(self._stored_names(node))
+        return loaded_names
+
+    def _new_validity_flag(self) -> str:
+        while True:
+            self.validity_count += 1
+            name = f"__mini_r1_case_valid_{self.validity_count}"
+            if name not in self.existing_names:
+                self.existing_names.add(name)
+                return name
+
+    def _assert_check(self, node: ast.Assert) -> ast.Try:
+        passed_increment = ast.AugAssign(
+            target=ast.Name(id=_PASSED_VAR, ctx=ast.Store()),
+            op=ast.Add(),
+            value=ast.Constant(value=1),
+        )
+        return ast.Try(
+            body=[node],
+            handlers=[ast.ExceptHandler(type=None, name=None, body=[ast.Pass()])],
+            orelse=[passed_increment],
+            finalbody=[],
+        )
+
+    def _guard_assert(self, node: ast.Assert) -> List[ast.stmt]:
         self.assert_count += 1
         total_increment = ast.AugAssign(
             target=ast.Name(id=_TOTAL_VAR, ctx=ast.Store()),
             op=ast.Add(),
             value=ast.Constant(value=1),
         )
-        passed_increment = ast.AugAssign(
-            target=ast.Name(id=_PASSED_VAR, ctx=ast.Store()),
-            op=ast.Add(),
-            value=ast.Constant(value=1),
-        )
-        guarded_assert = ast.Try(
-            body=[node],
-            handlers=[ast.ExceptHandler(type=None, name=None, body=[ast.Pass()])],
-            orelse=[passed_increment],
-            finalbody=[],
-        )
-        return [total_increment, guarded_assert]
+        return [total_increment, self._assert_check(node)]
 
-    # Nested scopes have their own locals and are not part of check()'s test flow.
-    def visit_FunctionDef(self, node):
-        return node
+    def _guard_case_setup(
+        self,
+        case_setup: ast.stmt,
+        assertions: List[ast.Assert],
+        stored_names,
+    ) -> List[ast.stmt]:
+        """Skip only assertions that depend on a failed case setup."""
+        validity_flag = self._new_validity_flag()
+        transformed = [
+            ast.Assign(
+                targets=[ast.Name(id=validity_flag, ctx=ast.Store())],
+                value=ast.Constant(value=False),
+            ),
+            ast.Try(
+                body=[case_setup],
+                handlers=[
+                    ast.ExceptHandler(type=None, name=None, body=[ast.Pass()])
+                ],
+                orelse=[
+                    ast.Assign(
+                        targets=[ast.Name(id=validity_flag, ctx=ast.Store())],
+                        value=ast.Constant(value=True),
+                    )
+                ],
+                finalbody=[],
+            ),
+        ]
 
-    def visit_AsyncFunctionDef(self, node):
-        return node
+        for assertion in assertions:
+            total_increment, guarded_assert = self._guard_assert(assertion)
+            transformed.append(total_increment)
+            if stored_names & self._loaded_names(assertion.test):
+                transformed.append(
+                    ast.If(
+                        test=ast.Name(id=validity_flag, ctx=ast.Load()),
+                        body=[guarded_assert],
+                        orelse=[],
+                    )
+                )
+            else:
+                transformed.append(guarded_assert)
 
-    def visit_ClassDef(self, node):
-        return node
+        return transformed
 
 
 def _instrument_humaneval_tests(test_code: str) -> Optional[str]:
@@ -240,14 +438,34 @@ def _instrument_humaneval_tests(test_code: str) -> Optional[str]:
     if check_function is None or isinstance(check_function, ast.AsyncFunctionDef):
         return None
 
-    instrumenter = _AssertInstrumenter()
-    transformed_body = []
-    for statement in check_function.body:
-        transformed = instrumenter.visit(statement)
-        if isinstance(transformed, list):
-            transformed_body.extend(transformed)
-        elif transformed is not None:
-            transformed_body.append(transformed)
+    positional_args = [
+        *check_function.args.posonlyargs,
+        *check_function.args.args,
+    ]
+    if not positional_args:
+        return None
+
+    argument_names = {
+        argument.arg
+        for argument in (
+            *check_function.args.posonlyargs,
+            *check_function.args.args,
+            *check_function.args.kwonlyargs,
+        )
+    }
+    if check_function.args.vararg is not None:
+        argument_names.add(check_function.args.vararg.arg)
+    if check_function.args.kwarg is not None:
+        argument_names.add(check_function.args.kwarg.arg)
+
+    existing_names = {
+        node.id for node in ast.walk(check_function) if isinstance(node, ast.Name)
+    } | argument_names
+    instrumenter = _AssertInstrumenter(
+        positional_args[0].arg,
+        existing_names,
+    )
+    transformed_body = instrumenter.instrument_block(check_function.body)
 
     if instrumenter.assert_count == 0:
         return None
