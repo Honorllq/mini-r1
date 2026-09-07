@@ -56,11 +56,10 @@ def _pair_completions_with_metadata(completions, verification_info):
 def extract_code(completion_text: str) -> str:
     """从模型输出里抠 ```python ... ``` 代码块
 
-    和 Open-R1 的 extract_code 完全一样:
-      - 正则匹配 ```python\n...```
-      - 取最后一个匹配 (模型可能写多个代码块)
+      - 支持代码块开头的 LF 和 CRLF 换行，保留代码正文不变
+      - 取最后一个完整匹配 (模型可能写多个代码块)
     """
-    pattern = re.compile(r"```python\n(.*?)```", re.DOTALL)
+    pattern = re.compile(r"```python\r?\n(.*?)```", re.DOTALL)
     matches = pattern.findall(completion_text)
     return matches[-1] if matches else ""
 

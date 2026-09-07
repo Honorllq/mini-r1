@@ -40,6 +40,71 @@ def _completion(code: str) -> list[dict[str, str]]:
     return [{"role": "assistant", "content": f"```python\n{code}```"}]
 
 
+class TestCodeExtraction(unittest.TestCase):
+    def test_lf_and_crlf_fences_preserve_code_body(self) -> None:
+        module, _ = _load_reward_funcs_module()
+        for fence_newline in ("\n", "\r\n"):
+            for code in (
+                "pass",
+                "def answer():\n    return 42\n",
+                "def answer():\r\n    return 42\r\n",
+            ):
+                with self.subTest(fence_newline=fence_newline, code=code):
+                    self.assertEqual(
+                        module.extract_code(f"```python{fence_newline}{code}```"),
+                        code,
+                    )
+
+    def test_last_complete_block_wins_with_mixed_line_endings(self) -> None:
+        module, _ = _load_reward_funcs_module()
+        for first_newline, last_newline in (("\n", "\r\n"), ("\r\n", "\n")):
+            with self.subTest(first=first_newline, last=last_newline):
+                text = (
+                    f"```python{first_newline}first()\n```\n"
+                    f"```python{last_newline}last()\r\n```\n"
+                    "```python\r\nunfinished()"
+                )
+                self.assertEqual(module.extract_code(text), "last()\r\n")
+
+    def test_no_complete_python_block_returns_empty(self) -> None:
+        module, _ = _load_reward_funcs_module()
+        for text in (
+            "pass",
+            "```javascript\r\npass\r\n```",
+            "```python\npass",
+            "```python\r\npass",
+            "```python\rpass```",
+            "```python\r\n```",
+        ):
+            with self.subTest(text=text):
+                self.assertEqual(module.extract_code(text), "")
+
+    def test_crlf_completions_reach_all_reward_sandboxes(self) -> None:
+        code = "def answer():\r\n    return 42\r\n"
+        completions = [{"role": "assistant", "content": f"```python\r\n{code}```"}]
+        info = {"test_cases": [], "test_code": "test", "entry_point": "answer"}
+        reward_cases = (
+            ("code_reward", "compute_pass_rate", 0.25, 0.25),
+            ("code_reward_humaneval", "run_humaneval_test", True, 1.0),
+            ("code_reward_humaneval_partial", "compute_humaneval_pass_rate", 0.75, 0.75),
+        )
+        for reward_name, sandbox_name, result, expected in reward_cases:
+            with self.subTest(reward=reward_name):
+                module, sandbox_functions = _load_reward_funcs_module()
+                sandbox_function = sandbox_functions[sandbox_name]
+                sandbox_function.return_value = result
+                self.assertEqual(
+                    getattr(module, reward_name)([completions], verification_info=[info]),
+                    [expected],
+                )
+                if reward_name == "code_reward":
+                    sandbox_function.assert_called_once_with(code, info["test_cases"])
+                else:
+                    sandbox_function.assert_called_once_with(
+                        code=code, test_code=info["test_code"], entry_point=info["entry_point"]
+                    )
+
+
 class TestRewardBatchAlignment(unittest.TestCase):
     def test_metadata_rewards_reject_misaligned_batches_before_sandbox(self):
         batch_sizes = ((2, 1), (1, 2))
