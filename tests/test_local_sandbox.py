@@ -11,6 +11,58 @@ import local_sandbox
 
 
 class TestSandboxInterpreter(unittest.TestCase):
+    def test_stdio_timeout_does_not_skip_later_cases(self) -> None:
+        # Finite sleep keeps a timeout regression from hanging the test suite.
+        code = (
+            "import time\n"
+            "value = int(input())\n"
+            "if value == 0:\n"
+            "    time.sleep(2)\n"
+            "print(value)"
+        )
+        score = local_sandbox.compute_pass_rate(
+            code,
+            [{"input": "0", "output": "0"}, {"input": "1", "output": "1"}],
+            timeout=1,
+        )
+        self.assertEqual(score, 0.5)
+
+    def test_binary_humaneval_times_out_then_scores_next_candidate(self) -> None:
+        test_code = "def check(candidate):\n    assert candidate() == 1"
+        slow_code = "import time\ndef f():\n    time.sleep(2)\n    return 1"
+        self.assertFalse(
+            local_sandbox.run_humaneval_test(slow_code, test_code, "f", timeout=1)
+        )
+        self.assertTrue(
+            local_sandbox.run_humaneval_test("def f(): return 1", test_code, "f")
+        )
+
+    def test_partial_humaneval_timeout_discards_incomplete_score(self) -> None:
+        test_code = (
+            "def check(candidate):\n"
+            "    assert candidate(0) == 0\n"
+            "    assert candidate(1) == 1"
+        )
+        slow_code = (
+            "import time\n"
+            "def f(value):\n"
+            "    if value == 1:\n"
+            "        time.sleep(2)\n"
+            "    return value"
+        )
+        self.assertEqual(
+            local_sandbox.compute_humaneval_pass_rate(
+                slow_code, test_code, "f", timeout=1
+            ),
+            0.0,
+        )
+        self.assertEqual(
+            local_sandbox.compute_humaneval_pass_rate(
+                "def f(value): return value", test_code, "f"
+            ),
+            1.0,
+        )
+
     @patch("local_sandbox.subprocess.run")
     def test_run_one_test_uses_current_interpreter(self, mock_run):
         mock_run.return_value = subprocess.CompletedProcess(
