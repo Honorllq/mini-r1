@@ -165,6 +165,36 @@ class TestTrainingDefaults(unittest.TestCase):
                 model_loader.assert_not_called()
                 config_factory.assert_not_called()
 
+    def test_cli_rejects_invalid_epoch_counts_before_model_load(self) -> None:
+        for raw_value in ("0", "-1", "-2", "1.5", "not-an-int"):
+            with self.subTest(raw_value=raw_value):
+                model_loader, config_factory, exit_code = _run_train_cli(
+                    ["--num_train_epochs", raw_value]
+                )
+                self.assertEqual(exit_code, 2)
+                model_loader.assert_not_called()
+                config_factory.assert_not_called()
+
+    def test_cli_preserves_valid_epoch_counts_and_step_limits(self) -> None:
+        cases = (
+            ([], 2, -1),
+            (["--num_train_epochs", "1"], 1, -1),
+            (["--num_train_epochs", "3"], 3, -1),
+            (["--debug", "--num_train_epochs", "3"], 3, 2),
+            (["--num_train_epochs", "3", "--max_steps", "5"], 3, 5),
+        )
+        for arguments, expected_epochs, expected_steps in cases:
+            with self.subTest(arguments=arguments):
+                model_loader, config_factory, exit_code = _run_train_cli(arguments)
+                self.assertIsNone(exit_code)
+                model_loader.assert_called_once()
+                self.assertEqual(
+                    config_factory.call_args.kwargs["num_train_epochs"], expected_epochs
+                )
+                self.assertEqual(
+                    config_factory.call_args.kwargs["max_steps"], expected_steps
+                )
+
     def test_cli_preserves_debug_max_steps_behavior(self):
         cases = (
             ([], -1),

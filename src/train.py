@@ -45,6 +45,17 @@ def _parse_max_steps(value: str) -> int:
     raise argparse.ArgumentTypeError("must be -1 or a positive integer")
 
 
+def _parse_num_train_epochs(value: str) -> int:
+    """Reject invalid epoch counts before loading training resources."""
+    try:
+        parsed = int(value)
+    except ValueError as exc:
+        raise argparse.ArgumentTypeError("must be a positive integer") from exc
+    if parsed <= 0:
+        raise argparse.ArgumentTypeError("must be a positive integer")
+    return parsed
+
+
 def main(args):
     # =========================================================================
     # Step 1: 加载模型 + tokenizer
@@ -181,9 +192,9 @@ if __name__ == "__main__":
     )
     parser.add_argument(
         "--num_train_epochs",
-        type=int,
+        type=_parse_num_train_epochs,
         default=2,
-        help="训练轮数 (默认 2，即实验中的 v3 最优配方)",
+        help="训练轮数，必须为正整数 (默认 2，即实验中的 v3 最优配方)",
     )
     args = parser.parse_args()
 
