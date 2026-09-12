@@ -7,6 +7,8 @@
   3. 对比 stdout 和 expected output
   4. 返回 pass rate (0~1 float)
 
+子进程固定 PYTHONOPTIMIZE=0，避免环境优化设置跳过判分所需的 assert。
+
 替换 Open-R1 rewards.py line 592 的 execution_provider.execute_scripts(...)
 
 安全边界:
@@ -18,6 +20,7 @@
 """
 
 import ast
+import os
 import secrets
 import subprocess
 import sys
@@ -54,6 +57,7 @@ def run_one_test(
             capture_output=True,       # 抓 stdout + stderr
             text=True,                 # 按字符串处理 (不是 bytes)
             timeout=timeout,           # 超时强杀
+            env={**os.environ, "PYTHONOPTIMIZE": "0"},
         )
     except subprocess.TimeoutExpired:
         return False                   # 死循环
@@ -172,6 +176,7 @@ def run_humaneval_test(
             capture_output=True,
             text=True,
             timeout=timeout,
+            env={**os.environ, "PYTHONOPTIMIZE": "0"},
         )
     except subprocess.TimeoutExpired:
         return False
@@ -588,6 +593,7 @@ def compute_humaneval_pass_rate(
             capture_output=True,
             text=True,
             timeout=timeout,
+            env={**os.environ, "PYTHONOPTIMIZE": "0"},
         )
     except subprocess.TimeoutExpired:
         return 0.0

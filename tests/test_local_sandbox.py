@@ -1,3 +1,4 @@
+import os
 import subprocess
 import sys
 import unittest
@@ -11,6 +12,56 @@ import local_sandbox
 
 
 class TestSandboxInterpreter(unittest.TestCase):
+    def test_stdio_keeps_assertions_and_preserves_other_environment(self) -> None:
+        code = (
+            "import os\n"
+            "assert int(input()) > 0\n"
+            "print(os.environ['MINI_R1_TEST_ENV'])"
+        )
+        for level in ("1", "2"):
+            with self.subTest(optimization=level):
+                with patch.dict(os.environ, {
+                    "PYTHONOPTIMIZE": level, "MINI_R1_TEST_ENV": "preserved"
+                }):
+                    self.assertTrue(local_sandbox.run_one_test(code, "1", "preserved"))
+                    self.assertFalse(local_sandbox.run_one_test(code, "0", "preserved"))
+                    self.assertEqual(os.environ["PYTHONOPTIMIZE"], level)
+                    self.assertEqual(os.environ["MINI_R1_TEST_ENV"], "preserved")
+
+    def test_binary_humaneval_keeps_assertions_when_parent_enables_optimization(self) -> None:
+        test_code = (
+            "def check(candidate):\n"
+            "    assert candidate(1) == 1\n"
+            "    assert candidate(2) == 2"
+        )
+        for level in ("1", "2"):
+            with self.subTest(optimization=level):
+                with patch.dict(os.environ, {"PYTHONOPTIMIZE": level}):
+                    self.assertTrue(local_sandbox.run_humaneval_test(
+                        "def f(value): return value", test_code, "f"
+                    ))
+                    self.assertFalse(local_sandbox.run_humaneval_test(
+                        "def f(value): return 1", test_code, "f"
+                    ))
+                    self.assertEqual(os.environ["PYTHONOPTIMIZE"], level)
+
+    def test_partial_humaneval_keeps_assertions_when_parent_enables_optimization(self) -> None:
+        test_code = (
+            "def check(candidate):\n"
+            "    assert candidate(1) == 1\n"
+            "    assert candidate(2) == 2"
+        )
+        for level in ("1", "2"):
+            with self.subTest(optimization=level):
+                with patch.dict(os.environ, {"PYTHONOPTIMIZE": level}):
+                    self.assertEqual(local_sandbox.compute_humaneval_pass_rate(
+                        "def f(value): return value", test_code, "f"
+                    ), 1.0)
+                    self.assertEqual(local_sandbox.compute_humaneval_pass_rate(
+                        "def f(value): return 1", test_code, "f"
+                    ), 0.5)
+                    self.assertEqual(os.environ["PYTHONOPTIMIZE"], level)
+
     def test_stdio_timeout_does_not_skip_later_cases(self) -> None:
         # Finite sleep keeps a timeout regression from hanging the test suite.
         code = (
