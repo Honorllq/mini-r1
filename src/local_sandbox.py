@@ -8,6 +8,7 @@
   4. 返回 pass rate (0~1 float)
 
 子进程固定 PYTHONOPTIMIZE=0，避免环境优化设置跳过判分所需的 assert。
+父子进程使用 UTF-8 文本通道，避免继承的编码设置影响 Unicode 输入、输出和判分。
 
 替换 Open-R1 rewards.py line 592 的 execution_provider.execute_scripts(...)
 
@@ -56,8 +57,13 @@ def run_one_test(
             input=test_input,          # 喂 stdin
             capture_output=True,       # 抓 stdout + stderr
             text=True,                 # 按字符串处理 (不是 bytes)
+            encoding="utf-8",
             timeout=timeout,           # 超时强杀
-            env={**os.environ, "PYTHONOPTIMIZE": "0"},
+            env={
+                **os.environ,
+                "PYTHONOPTIMIZE": "0",
+                "PYTHONIOENCODING": "utf-8",
+            },
         )
     except subprocess.TimeoutExpired:
         return False                   # 死循环
@@ -175,8 +181,13 @@ def run_humaneval_test(
             [sys.executable, "-c", full_script],
             capture_output=True,
             text=True,
+            encoding="utf-8",
             timeout=timeout,
-            env={**os.environ, "PYTHONOPTIMIZE": "0"},
+            env={
+                **os.environ,
+                "PYTHONOPTIMIZE": "0",
+                "PYTHONIOENCODING": "utf-8",
+            },
         )
     except subprocess.TimeoutExpired:
         return False
@@ -592,8 +603,13 @@ def compute_humaneval_pass_rate(
             [sys.executable, "-c", full_script],
             capture_output=True,
             text=True,
+            encoding="utf-8",
             timeout=timeout,
-            env={**os.environ, "PYTHONOPTIMIZE": "0"},
+            env={
+                **os.environ,
+                "PYTHONOPTIMIZE": "0",
+                "PYTHONIOENCODING": "utf-8",
+            },
         )
     except subprocess.TimeoutExpired:
         return 0.0

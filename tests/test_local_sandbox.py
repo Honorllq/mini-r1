@@ -12,6 +12,46 @@ import local_sandbox
 
 
 class TestSandboxInterpreter(unittest.TestCase):
+    def test_stdio_roundtrips_unicode_with_inherited_io_encoding(self) -> None:
+        text = "你好 café 😀"
+        for encoding in ("utf-8", "ascii", "utf-16"):
+            with self.subTest(encoding=encoding):
+                with patch.dict(os.environ, {"PYTHONIOENCODING": encoding}):
+                    self.assertTrue(
+                        local_sandbox.run_one_test("print(input())", text, text)
+                    )
+                    self.assertFalse(
+                        local_sandbox.run_one_test("print(input())", text, "wrong")
+                    )
+                    self.assertEqual(os.environ["PYTHONIOENCODING"], encoding)
+
+    def test_humaneval_scores_ignore_unicode_diagnostics(self) -> None:
+        test_code = (
+            "def check(candidate):\n"
+            "    assert candidate(1) == 1\n"
+            "    assert candidate(2) == 2"
+        )
+        diagnostics = (
+            "import sys\n"
+            "print('你好 café 😀', flush=True)\n"
+            "print('你好 café 😀', file=sys.stderr, flush=True)\n"
+        )
+        scoring_cases = (
+            (local_sandbox.run_humaneval_test, "value", True),
+            (local_sandbox.run_humaneval_test, "1", False),
+            (local_sandbox.compute_humaneval_pass_rate, "value", 1.0),
+            (local_sandbox.compute_humaneval_pass_rate, "1", 0.5),
+        )
+        for encoding in ("utf-8", "ascii", "utf-16"):
+            for score, returned, expected in scoring_cases:
+                with self.subTest(
+                    encoding=encoding, scorer=score.__name__, returned=returned
+                ):
+                    with patch.dict(os.environ, {"PYTHONIOENCODING": encoding}):
+                        code = diagnostics + f"def f(value): return {returned}"
+                        self.assertEqual(score(code, test_code, "f"), expected)
+                        self.assertEqual(os.environ["PYTHONIOENCODING"], encoding)
+
     def test_stdio_keeps_assertions_and_preserves_other_environment(self) -> None:
         code = (
             "import os\n"
@@ -122,6 +162,7 @@ class TestSandboxInterpreter(unittest.TestCase):
 
         self.assertTrue(local_sandbox.run_one_test("print(3)", "", "3"))
         self.assertEqual(mock_run.call_args.args[0][:2], [sys.executable, "-c"])
+        self.assertEqual(mock_run.call_args.kwargs["encoding"], "utf-8")
 
     @patch("local_sandbox.subprocess.run")
     def test_run_humaneval_test_uses_current_interpreter(self, mock_run):
@@ -144,6 +185,7 @@ class TestSandboxInterpreter(unittest.TestCase):
 
         self.assertTrue(passed)
         self.assertEqual(mock_run.call_args.args[0][:2], [sys.executable, "-c"])
+        self.assertEqual(mock_run.call_args.kwargs["encoding"], "utf-8")
 
     def test_run_humaneval_test_rejects_exit_code_spoof(self):
         self.assertFalse(
@@ -254,6 +296,7 @@ class TestSandboxInterpreter(unittest.TestCase):
 
         self.assertEqual(score, 1.0)
         self.assertEqual(mock_run.call_args.args[0][:2], [sys.executable, "-c"])
+        self.assertEqual(mock_run.call_args.kwargs["encoding"], "utf-8")
 
     def test_partial_humaneval_reward_preserves_check_setup(self):
         score = local_sandbox.compute_humaneval_pass_rate(
