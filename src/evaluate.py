@@ -108,7 +108,10 @@ def evaluate(
             tokenize=False,
             add_generation_prompt=True,
         )
-        inputs = tokenizer(prompt_text, return_tensors="pt").to(model.device)
+        # The chat template already includes the required special tokens.
+        inputs = tokenizer(
+            prompt_text, return_tensors="pt", add_special_tokens=False
+        ).to(model.device)
 
         # 贪心生成 (评测用确定性, 不采样)
         with torch.no_grad():

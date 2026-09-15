@@ -260,6 +260,14 @@ class TestEvaluateRuntime(unittest.TestCase):
             ],
         )
         self.assertEqual(
+            self.tokenizer.call_args_list,
+            [
+                mock.call(
+                    "formatted prompt", return_tensors="pt", add_special_tokens=False
+                )
+            ] * 3,
+        )
+        self.assertEqual(
             self.tokenizer.decode.call_args_list,
             [mock.call([token], skip_special_tokens=True) for token in (201, 202, 203)],
         )
@@ -274,6 +282,35 @@ class TestEvaluateRuntime(unittest.TestCase):
                 for i in (0, 2)
             ],
         )
+
+    def test_chat_special_tokens_are_not_added_twice(self) -> None:
+        self.tokenizer.apply_chat_template.return_value = "<bos>user task<eos>assistant"
+
+        def tokenize(
+            text: str, *, return_tensors: str, add_special_tokens: bool = True
+        ) -> _EvaluationInputs:
+            self.assertEqual(text, "<bos>user task<eos>assistant")
+            self.assertEqual(return_tensors, "pt")
+            # Model a tokenizer whose post-processor adds BOS/EOS by default.
+            tokens = [1, 10, 2, 11]
+            if add_special_tokens:
+                tokens = [1, *tokens, 2]
+            return _EvaluationInputs(
+                input_ids=types.SimpleNamespace(shape=(1, len(tokens)), tokens=tokens)
+            )
+
+        self.tokenizer.side_effect = tokenize
+
+        def generate(**kwargs: object) -> list[list[int]]:
+            tokens = kwargs["input_ids"].tokens
+            self.assertEqual(tokens, [1, 10, 2, 11])
+            return [[*tokens, 201]]
+
+        self.model.generate.side_effect = generate
+        summary = self._evaluate(num_samples=1)
+
+        self.tokenizer.decode.assert_called_once_with([201], skip_special_tokens=True)
+        self.assertEqual(summary["passed"], 1)
 
     def test_lora_model_is_used_and_existing_padding_is_preserved(self) -> None:
         adapter = mock.Mock(device="adapter-device")
