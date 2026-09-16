@@ -53,6 +53,27 @@ def _validate_positive_int(value: object, name: str) -> None:
         raise ValueError(f"{name} must be greater than 0")
 
 
+def _validate_label(value: object) -> str:
+    """Keep the label a filename component on both Windows and POSIX."""
+    if not isinstance(value, str):
+        raise TypeError("label must be a string")
+    if not value.strip():
+        raise ValueError("label must not be empty or whitespace-only")
+    if any(char in '<>:"/\\|?*' or ord(char) < 32 for char in value):
+        raise ValueError(
+            "label must not contain path separators, control characters, or "
+            "reserved filename characters; use output_dir for directories"
+        )
+    return value
+
+
+def _parse_label(value: str) -> str:
+    try:
+        return _validate_label(value)
+    except ValueError as exc:
+        raise argparse.ArgumentTypeError(str(exc)) from exc
+
+
 def evaluate(
     model_name: str,
     lora_path: str | None = None,
@@ -68,11 +89,12 @@ def evaluate(
         lora_path: 如果有 LoRA, 给路径
         num_samples: 评多少题, 必须是大于 0 的整数, 最多 164
         max_new_tokens: 生成最大 token 数
-        label: 标签, 用于保存结果文件名
+        label: 非空文件名标签，不含路径分隔符、控制字符或 Windows 保留字符
         output_dir: 结果保存目录
     """
     _validate_positive_int(num_samples, "num_samples")
     _validate_positive_int(max_new_tokens, "max_new_tokens")
+    _validate_label(label)
 
     # === 加载模型 ===
     print(f"\n[1/3] 加载模型: {model_name}")
@@ -216,8 +238,9 @@ def main():
     )
     parser.add_argument(
         "--label",
+        type=_parse_label,
         default="baseline",
-        help="结果标签 (用于命名输出文件)",
+        help="非空文件名标签，不含路径分隔符或保留字符；目录请用 --output_dir",
     )
     parser.add_argument(
         "--output_dir",

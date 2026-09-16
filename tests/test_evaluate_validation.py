@@ -11,6 +11,11 @@ from unittest import mock
 
 
 EVALUATE_SCRIPT = Path(__file__).parents[1] / "src" / "evaluate.py"
+INVALID_LABELS = (
+    "", " \t", "baseline/v3", r"baseline\v3", "../../outside", r"..\..\outside",
+    "nul\x00label", "line\nbreak", "tab\tlabel",
+    *(f"label{char}v3" for char in '<>:"|?*'),
+)
 
 
 def _stub_module(name: str, **attributes: object) -> types.ModuleType:
@@ -54,6 +59,57 @@ def _load_evaluate_module() -> tuple[types.ModuleType, mock.Mock]:
 
 
 class TestEvaluateInputValidation(unittest.TestCase):
+    def test_invalid_labels_fail_before_loading_resources(self) -> None:
+        module, model_loader = _load_evaluate_module()
+
+        for label in INVALID_LABELS:
+            with self.subTest(label=label):
+                with self.assertRaisesRegex(ValueError, "label"):
+                    module.evaluate("unused-model", label=label)
+
+        model_loader.assert_not_called()
+        module.AutoTokenizer.from_pretrained.assert_not_called()
+        module.load_humaneval.assert_not_called()
+
+    def test_non_string_labels_fail_before_model_load(self) -> None:
+        module, model_loader = _load_evaluate_module()
+
+        for label in (None, True, 123, Path("baseline")):
+            with self.subTest(label=label):
+                with self.assertRaisesRegex(TypeError, "label must be a string"):
+                    module.evaluate("unused-model", label=label)
+
+        model_loader.assert_not_called()
+
+    def test_cli_rejects_invalid_labels(self) -> None:
+        module, _ = _load_evaluate_module()
+
+        for label in INVALID_LABELS:
+            with self.subTest(label=label):
+                error_output = io.StringIO()
+                with mock.patch.object(sys, "argv", ["evaluate.py", "--label", label]):
+                    with mock.patch.object(module, "evaluate") as evaluate:
+                        with mock.patch("sys.stderr", new=error_output):
+                            with self.assertRaises(SystemExit) as raised:
+                                module.main()
+                self.assertEqual(raised.exception.code, 2)
+                self.assertIn("--label", error_output.getvalue())
+                evaluate.assert_not_called()
+
+    def test_cli_preserves_valid_labels_and_default(self) -> None:
+        module, _ = _load_evaluate_module()
+
+        for options, expected in (
+            ([], "baseline"),
+            (["--label", "trained-v3.1"], "trained-v3.1"),
+            (["--label", "微调结果 版本1"], "微调结果 版本1"),
+        ):
+            with self.subTest(label=expected):
+                with mock.patch.object(sys, "argv", ["evaluate.py", *options]):
+                    with mock.patch.object(module, "evaluate") as evaluate:
+                        module.main()
+                self.assertEqual(evaluate.call_args.kwargs["label"], expected)
+
     def test_evaluate_rejects_non_positive_samples_before_model_load(self):
         module, model_loader = _load_evaluate_module()
 
@@ -213,15 +269,25 @@ class TestEvaluateRuntime(unittest.TestCase):
         self.addCleanup(temporary.cleanup)
         self.output_dir = Path(temporary.name) / "nested" / "eval"
 
-    def _evaluate(self, num_samples: int = 3, lora_path: str | None = None) -> dict:
+    def _evaluate(
+        self, num_samples: int = 3, lora_path: str | None = None,
+        label: str = "unit_test",
+    ) -> dict:
         with redirect_stdout(io.StringIO()):
             summary = self.module.evaluate(
                 "base-model", num_samples=num_samples, max_new_tokens=7,
-                lora_path=lora_path, label="unit_test", output_dir=str(self.output_dir),
+                lora_path=lora_path, label=label, output_dir=str(self.output_dir),
             )
-        artifact = self.output_dir / "eval_unit_test.json"
+        artifact = self.output_dir / f"eval_{label}.json"
         self.assertEqual(json.loads(artifact.read_text(encoding="utf-8")), summary)
         return summary
+
+    def test_valid_labels_are_preserved_in_json_and_filename(self) -> None:
+        for label in ("trained-v3.1", "微调结果 版本1", "CON"):
+            with self.subTest(label=label):
+                summary = self._evaluate(num_samples=1, label=label)
+                self.assertEqual(summary["label"], label)
+                self.assertTrue((self.output_dir / f"eval_{label}.json").is_file())
 
     def test_mixed_results_are_aggregated_and_saved_without_losing_samples(self) -> None:
         summary = self._evaluate()
