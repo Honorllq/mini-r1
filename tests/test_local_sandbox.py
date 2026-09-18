@@ -1,6 +1,7 @@
 import os
 import subprocess
 import sys
+import threading
 import unittest
 from pathlib import Path
 from unittest.mock import patch
@@ -12,6 +13,55 @@ import local_sandbox
 
 
 class TestSandboxInterpreter(unittest.TestCase):
+    def test_stdio_rejects_invalid_utf8_without_reader_errors(self) -> None:
+        for fd in (1, 2):
+            with self.subTest(fd=fd):
+                code = f"import os\nos.write({fd}, b'\\xff')\nprint(1)"
+                # Replacement decoding must not turn malformed output into a pass.
+                expected = "\ufffd1" if fd == 1 else "1"
+                with patch.object(threading, "excepthook") as reader_error:
+                    self.assertFalse(local_sandbox.run_one_test(code, "", expected))
+                    reader_error.assert_not_called()
+                self.assertTrue(local_sandbox.run_one_test("print(1)", "", "1"))
+
+    def test_invalid_utf8_does_not_skip_later_stdio_cases(self) -> None:
+        code = (
+            "import os\n"
+            "value = input()\n"
+            "if value == 'bad':\n"
+            "    os.write(1, b'\\xff')\n"
+            "else:\n"
+            "    print(value)"
+        )
+        with patch.object(threading, "excepthook") as reader_error:
+            self.assertEqual(local_sandbox.compute_pass_rate(
+                code,
+                [{"input": "bad", "output": "bad"}, {"input": "ok", "output": "ok"}],
+            ), 0.5)
+            reader_error.assert_not_called()
+
+    def test_humaneval_rejects_invalid_utf8_without_reader_errors(self) -> None:
+        test_code = "def check(candidate):\n    assert candidate() == 1"
+        for score in (
+            local_sandbox.run_humaneval_test,
+            local_sandbox.compute_humaneval_pass_rate,
+        ):
+            for fd in (1, 2):
+                with self.subTest(scorer=score.__name__, fd=fd):
+                    code = f"import os\nos.write({fd}, b'\\xff')\ndef f(): return 1"
+                    with patch.object(threading, "excepthook") as reader_error:
+                        self.assertEqual(score(code, test_code, "f"), 0)
+                        reader_error.assert_not_called()
+                    self.assertEqual(score("def f(): return 1", test_code, "f"), 1)
+
+    def test_stdio_preserves_text_mode_newline_behavior(self) -> None:
+        code = "import sys\nsys.stdout.buffer.write(b'first\\r\\nsecond\\rlast\\n')"
+        self.assertTrue(local_sandbox.run_one_test(code, "", "first\nsecond\nlast"))
+        text = "first\nsecond\n"
+        expected_input = text.replace("\n", os.linesep).encode("utf-8")
+        code = f"import sys\nassert sys.stdin.buffer.read() == {expected_input!r}\nprint(1)"
+        self.assertTrue(local_sandbox.run_one_test(code, text, "1"))
+
     def test_stdio_roundtrips_unicode_with_inherited_io_encoding(self) -> None:
         text = "你好 café 😀"
         for encoding in ("utf-8", "ascii", "utf-16"):
@@ -157,20 +207,20 @@ class TestSandboxInterpreter(unittest.TestCase):
     @patch("local_sandbox.subprocess.run")
     def test_run_one_test_uses_current_interpreter(self, mock_run):
         mock_run.return_value = subprocess.CompletedProcess(
-            [], 0, stdout="3\n", stderr=""
+            [], 0, stdout=b"3\n", stderr=b""
         )
 
         self.assertTrue(local_sandbox.run_one_test("print(3)", "", "3"))
         self.assertEqual(mock_run.call_args.args[0][:2], [sys.executable, "-c"])
-        self.assertEqual(mock_run.call_args.kwargs["encoding"], "utf-8")
+        self.assertFalse(mock_run.call_args.kwargs["text"])
 
     @patch("local_sandbox.subprocess.run")
     def test_run_humaneval_test_uses_current_interpreter(self, mock_run):
         mock_run.return_value = subprocess.CompletedProcess(
             [],
             0,
-            stdout="__MINI_R1_HUMANEVAL_SUCCESS__:0123456789abcdef\n",
-            stderr="",
+            stdout=b"__MINI_R1_HUMANEVAL_SUCCESS__:0123456789abcdef\n",
+            stderr=b"",
         )
 
         with patch(
@@ -185,7 +235,7 @@ class TestSandboxInterpreter(unittest.TestCase):
 
         self.assertTrue(passed)
         self.assertEqual(mock_run.call_args.args[0][:2], [sys.executable, "-c"])
-        self.assertEqual(mock_run.call_args.kwargs["encoding"], "utf-8")
+        self.assertFalse(mock_run.call_args.kwargs["text"])
 
     def test_run_humaneval_test_rejects_exit_code_spoof(self):
         self.assertFalse(
@@ -280,8 +330,8 @@ class TestSandboxInterpreter(unittest.TestCase):
         mock_run.return_value = subprocess.CompletedProcess(
             [],
             0,
-            stdout="__MINI_R1_PASSED_COUNT__:0123456789abcdef=1/1\n",
-            stderr="",
+            stdout=b"__MINI_R1_PASSED_COUNT__:0123456789abcdef=1/1\n",
+            stderr=b"",
         )
 
         with patch(
@@ -296,7 +346,7 @@ class TestSandboxInterpreter(unittest.TestCase):
 
         self.assertEqual(score, 1.0)
         self.assertEqual(mock_run.call_args.args[0][:2], [sys.executable, "-c"])
-        self.assertEqual(mock_run.call_args.kwargs["encoding"], "utf-8")
+        self.assertFalse(mock_run.call_args.kwargs["text"])
 
     def test_partial_humaneval_reward_preserves_check_setup(self):
         score = local_sandbox.compute_humaneval_pass_rate(
@@ -520,8 +570,8 @@ class TestSandboxInterpreter(unittest.TestCase):
         mock_run.return_value = subprocess.CompletedProcess(
             [],
             0,
-            stdout=f"{marker}0/2\n{marker}2/2\n",
-            stderr="",
+            stdout=f"{marker}0/2\n{marker}2/2\n".encode("utf-8"),
+            stderr=b"",
         )
 
         with patch(

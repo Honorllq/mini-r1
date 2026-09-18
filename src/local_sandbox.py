@@ -9,6 +9,7 @@
 
 子进程固定 PYTHONOPTIMIZE=0，避免环境优化设置跳过判分所需的 assert。
 父子进程使用 UTF-8 文本通道，避免继承的编码设置影响 Unicode 输入、输出和判分。
+stdout 或 stderr 不是合法 UTF-8 时判为失败，不中断后续样本评分。
 
 替换 Open-R1 rewards.py line 592 的 execution_provider.execute_scripts(...)
 
@@ -54,10 +55,9 @@ def run_one_test(
     try:
         result = subprocess.run(
             [sys.executable, "-c", code],  # 使用当前 Python 环境执行代码
-            input=test_input,          # 喂 stdin
+            input=test_input.replace("\n", os.linesep).encode("utf-8"),
             capture_output=True,       # 抓 stdout + stderr
-            text=True,                 # 按字符串处理 (不是 bytes)
-            encoding="utf-8",
+            text=False,
             timeout=timeout,           # 超时强杀
             env={
                 **os.environ,
@@ -65,6 +65,9 @@ def run_one_test(
                 "PYTHONIOENCODING": "utf-8",
             },
         )
+        # 在主线程严格解码，避免 Windows 管道读取线程的解码异常逃逸。
+        stdout = result.stdout.decode("utf-8").replace("\r\n", "\n").replace("\r", "\n")
+        result.stderr.decode("utf-8")
     except subprocess.TimeoutExpired:
         return False                   # 死循环
     except Exception:
@@ -74,7 +77,7 @@ def run_one_test(
         return False
 
     # 对比 stdout 和 expected (去首尾空白)
-    actual = result.stdout.strip()
+    actual = stdout.strip()
     expected = expected_output.strip()
     return actual == expected
 
@@ -180,8 +183,7 @@ def run_humaneval_test(
         result = subprocess.run(
             [sys.executable, "-c", full_script],
             capture_output=True,
-            text=True,
-            encoding="utf-8",
+            text=False,
             timeout=timeout,
             env={
                 **os.environ,
@@ -189,13 +191,15 @@ def run_humaneval_test(
                 "PYTHONIOENCODING": "utf-8",
             },
         )
+        stdout = result.stdout.decode("utf-8")
+        result.stderr.decode("utf-8")
     except subprocess.TimeoutExpired:
         return False
     except Exception:
         return False
 
     success_lines = [
-        line for line in result.stdout.splitlines() if line == success_marker
+        line for line in stdout.splitlines() if line == success_marker
     ]
     return result.returncode == 0 and len(success_lines) == 1
 
@@ -602,8 +606,7 @@ def compute_humaneval_pass_rate(
         result = subprocess.run(
             [sys.executable, "-c", full_script],
             capture_output=True,
-            text=True,
-            encoding="utf-8",
+            text=False,
             timeout=timeout,
             env={
                 **os.environ,
@@ -611,6 +614,8 @@ def compute_humaneval_pass_rate(
                 "PYTHONIOENCODING": "utf-8",
             },
         )
+        stdout = result.stdout.decode("utf-8")
+        result.stderr.decode("utf-8")
     except subprocess.TimeoutExpired:
         return 0.0
     except Exception:
@@ -621,7 +626,7 @@ def compute_humaneval_pass_rate(
 
     marker_lines = [
         line
-        for line in result.stdout.splitlines()
+        for line in stdout.splitlines()
         if line.startswith(pass_count_marker)
     ]
     if len(marker_lines) != 1:
