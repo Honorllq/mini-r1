@@ -289,6 +289,57 @@ class TestEvaluateRuntime(unittest.TestCase):
                 self.assertEqual(summary["label"], label)
                 self.assertTrue((self.output_dir / f"eval_{label}.json").is_file())
 
+    def test_interrupted_write_preserves_existing_report(self) -> None:
+        self.output_dir.mkdir(parents=True)
+        artifact = self.output_dir / "eval_unit_test.json"
+        previous = b'{"previous": true}\n'
+        for error in (OSError("write failed"), KeyboardInterrupt()):
+            with self.subTest(error=type(error).__name__):
+                artifact.write_bytes(previous)
+                def fail_after_partial_write(summary, stream, **kwargs):
+                    stream.write('{"incomplete":')
+                    raise error
+
+                with mock.patch.object(self.module.json, "dump", fail_after_partial_write):
+                    with self.assertRaises(type(error)):
+                        self._evaluate(num_samples=1)
+                self.assertEqual(artifact.read_bytes(), previous)
+                self.assertEqual(set(self.output_dir.iterdir()), {artifact})
+
+    def test_failed_first_write_does_not_publish_partial_report(self) -> None:
+        def fail_after_partial_write(summary, stream, **kwargs):
+            stream.write('{"incomplete":')
+            raise OSError("write failed")
+
+        with mock.patch.object(self.module.json, "dump", fail_after_partial_write):
+            with self.assertRaisesRegex(OSError, "write failed"):
+                self._evaluate(num_samples=1)
+        self.assertEqual(list(self.output_dir.iterdir()), [])
+
+    def test_replace_failure_preserves_report_and_cleans_temporary_file(self) -> None:
+        self.output_dir.mkdir(parents=True)
+        artifact = self.output_dir / "eval_unit_test.json"
+        previous = b'{"previous": true}\n'
+        artifact.write_bytes(previous)
+        with mock.patch.object(
+            self.module.os, "replace", side_effect=PermissionError("replace failed")
+        ) as replace:
+            with self.assertRaisesRegex(PermissionError, "replace failed"):
+                self._evaluate(num_samples=1)
+        replace.assert_called_once()
+        self.assertEqual(artifact.read_bytes(), previous)
+        self.assertEqual(set(self.output_dir.iterdir()), {artifact})
+
+    def test_successful_write_replaces_existing_report_without_temporary_files(self) -> None:
+        self.output_dir.mkdir(parents=True)
+        label = "微调结果"
+        artifact = self.output_dir / f"eval_{label}.json"
+        artifact.write_text('{"previous": true}', encoding="utf-8")
+        summary = self._evaluate(num_samples=1, label=label)
+        self.assertEqual(summary["passed"], 1)
+        self.assertNotIn("previous", summary)
+        self.assertEqual(set(self.output_dir.iterdir()), {artifact})
+
     def test_mixed_results_are_aggregated_and_saved_without_losing_samples(self) -> None:
         summary = self._evaluate()
 

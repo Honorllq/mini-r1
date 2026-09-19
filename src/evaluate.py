@@ -22,6 +22,7 @@ import argparse
 import json
 import os
 import sys
+import tempfile
 from pathlib import Path
 
 import torch
@@ -189,11 +190,21 @@ def evaluate(
         "results": results,
     }
 
-    # 保存
+    # 先写同目录临时文件，关闭成功后再替换，避免写入失败损坏已有结果。
     os.makedirs(output_dir, exist_ok=True)
     output_file = os.path.join(output_dir, f"eval_{label}.json")
-    with open(output_file, "w", encoding="utf-8") as f:
-        json.dump(summary, f, ensure_ascii=False, indent=2)
+    temporary_path = None
+    try:
+        with tempfile.NamedTemporaryFile(
+            mode="w", encoding="utf-8", dir=output_dir,
+            prefix=".eval_", suffix=".json.tmp", delete=False,
+        ) as f:
+            temporary_path = Path(f.name)
+            json.dump(summary, f, ensure_ascii=False, indent=2)
+        os.replace(temporary_path, output_file)
+    finally:
+        if temporary_path is not None:
+            temporary_path.unlink(missing_ok=True)
 
     print(f"\n{'=' * 60}")
     print(f"评测完成! ({label})")
