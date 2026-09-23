@@ -13,6 +13,7 @@ HumanEval 评测脚本 — 对比训练前 vs 训练后的 Pass@1
 
 输出:
     outputs/eval/eval_<label>.json   - 详细结果
+    generation_kwargs 记录显式生成参数，不展开模型继承的默认配置
     控制台打印 Pass@1 总分
 """
 
@@ -114,6 +115,13 @@ def evaluate(
     if tokenizer.pad_token is None:
         tokenizer.pad_token = tokenizer.eos_token
 
+    # Share explicit overrides with the report so recorded settings match inference.
+    generation_kwargs = {
+        "max_new_tokens": max_new_tokens,
+        "do_sample": False,
+        "pad_token_id": tokenizer.pad_token_id,
+    }
+
     # === 加载数据 ===
     print(f"\n[2/3] 加载 HumanEval (前 {num_samples} 题)")
     ds = load_humaneval("test").select(range(min(num_samples, 164)))
@@ -140,9 +148,7 @@ def evaluate(
         with torch.no_grad():
             outputs = model.generate(
                 **inputs,
-                max_new_tokens=max_new_tokens,
-                do_sample=False,
-                pad_token_id=tokenizer.pad_token_id,
+                **generation_kwargs,
             )
 
         # 只取生成部分
@@ -183,6 +189,7 @@ def evaluate(
         "dataset": "openai/openai_humaneval",
         "split": "test",
         "evaluation_scope": "in_sample_same_tasks",
+        "generation_kwargs": generation_kwargs,
         "num_samples": len(ds),
         "passed": passed_count,
         "no_code": no_code_count,

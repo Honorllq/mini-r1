@@ -271,16 +271,39 @@ class TestEvaluateRuntime(unittest.TestCase):
 
     def _evaluate(
         self, num_samples: int = 3, lora_path: str | None = None,
-        label: str = "unit_test",
+        label: str = "unit_test", max_new_tokens: int = 7,
     ) -> dict:
         with redirect_stdout(io.StringIO()):
             summary = self.module.evaluate(
-                "base-model", num_samples=num_samples, max_new_tokens=7,
+                "base-model", num_samples=num_samples, max_new_tokens=max_new_tokens,
                 lora_path=lora_path, label=label, output_dir=str(self.output_dir),
             )
         artifact = self.output_dir / f"eval_{label}.json"
         self.assertEqual(json.loads(artifact.read_text(encoding="utf-8")), summary)
         return summary
+
+    def test_report_records_explicit_generation_settings(self) -> None:
+        self.tokenizer.pad_token_id = 17
+        summary = self._evaluate(max_new_tokens=23)
+
+        expected = {"max_new_tokens": 23, "do_sample": False, "pad_token_id": 17}
+        self.assertEqual(summary["generation_kwargs"], expected)
+        self.assertEqual(
+            self.model.generate.call_args_list,
+            [mock.call(**self.inputs, **expected)] * 3,
+        )
+
+    def test_report_records_default_generation_limit(self) -> None:
+        with redirect_stdout(io.StringIO()):
+            summary = self.module.evaluate(
+                "base-model", num_samples=1, output_dir=str(self.output_dir),
+            )
+
+        expected = {"max_new_tokens": 512, "do_sample": False, "pad_token_id": 7}
+        self.assertEqual(summary["generation_kwargs"], expected)
+        self.model.generate.assert_called_once_with(**self.inputs, **expected)
+        artifact = self.output_dir / "eval_model.json"
+        self.assertEqual(json.loads(artifact.read_text(encoding="utf-8")), summary)
 
     def test_valid_labels_are_preserved_in_json_and_filename(self) -> None:
         for label in ("trained-v3.1", "微调结果 版本1", "CON"):
@@ -451,6 +474,10 @@ class TestEvaluateRuntime(unittest.TestCase):
         self.assertEqual(self.inputs.device, "adapter-device")
         self.assertEqual(self.tokenizer.pad_token, "<existing-pad>")
         self.assertEqual(summary["lora_path"], "adapter-path")
+        self.assertEqual(
+            summary["generation_kwargs"],
+            {"max_new_tokens": 7, "do_sample": False, "pad_token_id": 7},
+        )
         self.assertEqual(summary["num_samples"], 1)
         self.assertEqual(summary["pass_at_1"], 1.0)
         self.assertEqual(len(summary["results"]), 1)
