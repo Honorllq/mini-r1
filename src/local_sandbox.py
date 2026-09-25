@@ -45,7 +45,7 @@ def run_one_test(
 
     Args:
         code: Python 代码字符串 (从 stdin 读输入，print 到 stdout)
-        test_input: 喂给 stdin 的文本
+        test_input: 喂给 stdin 的文本，LF/CRLF 按平台换行写入，保留空行
         expected_output: 期望的 stdout 输出
         timeout: 秒，超时则判为失败
 
@@ -53,9 +53,11 @@ def run_one_test(
         True = pass, False = fail 或 error 或 timeout
     """
     try:
+        # Normalize CRLF first so Windows translation cannot produce CRCRLF.
+        stdin_text = test_input.replace("\r\n", "\n").replace("\n", os.linesep)
         result = subprocess.run(
             [sys.executable, "-c", code],  # 使用当前 Python 环境执行代码
-            input=test_input.replace("\n", os.linesep).encode("utf-8"),
+            input=stdin_text.encode("utf-8"),
             capture_output=True,       # 抓 stdout + stderr
             text=False,
             timeout=timeout,           # 超时强杀

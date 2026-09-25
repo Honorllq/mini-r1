@@ -62,6 +62,26 @@ class TestSandboxInterpreter(unittest.TestCase):
         code = f"import sys\nassert sys.stdin.buffer.read() == {expected_input!r}\nprint(1)"
         self.assertTrue(local_sandbox.run_one_test(code, text, "1"))
 
+    def test_stdio_normalizes_lf_and_crlf_once_on_each_platform(self) -> None:
+        inputs = (
+            "你好 café\n\nsecond\n",
+            "你好 café\r\n\r\nsecond\r\n",
+            "你好 café\r\n\nsecond\r\n",
+        )
+        for newline in ("\n", "\r\n"):
+            expected = f"你好 café{newline}{newline}second{newline}".encode("utf-8")
+            code = f"import sys\nassert sys.stdin.buffer.read() == {expected!r}\nprint(1)"
+            for text in inputs:
+                with self.subTest(newline=newline, text=text):
+                    # Exercise both parent serialization paths even on Linux CI.
+                    with patch.object(local_sandbox.os, "linesep", newline):
+                        self.assertTrue(local_sandbox.run_one_test(code, text, "1"))
+
+    def test_stdio_crlf_input_does_not_add_blank_lines(self) -> None:
+        code = "first = int(input())\nsecond = int(input())\nprint(first + second)"
+        self.assertTrue(local_sandbox.run_one_test(code, "10\r\n20\r\n", "30"))
+        self.assertFalse(local_sandbox.run_one_test(code, "10\r\n20\r\n", "99"))
+
     def test_stdio_roundtrips_unicode_with_inherited_io_encoding(self) -> None:
         text = "你好 café 😀"
         for encoding in ("utf-8", "ascii", "utf-16"):

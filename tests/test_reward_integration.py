@@ -101,6 +101,17 @@ class TestRewardSandboxIntegration(unittest.TestCase):
                 with self.subTest(fd=fd, reward=reward.__name__):
                     self.assertEqual(reward(completions, verification_info=metadata), [0.0, 1.0])
 
+    def test_stdio_reward_accepts_crlf_cases_without_changing_scores(self) -> None:
+        completion = _code_completion("print(int(input()) + int(input()))")
+        self.assertEqual(reward_funcs.code_reward(
+            [completion],
+            verification_info=[{"test_cases": [
+                {"input": "10\n20\n", "output": "30"},
+                {"input": "10\r\n20\r\n", "output": "30"},
+                {"input": "10\r\n20\r\n", "output": "99"},
+            ]}],
+        ), [2 / 3])
+
 
 if __name__ == "__main__":
     unittest.main()
