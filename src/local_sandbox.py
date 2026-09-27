@@ -46,7 +46,7 @@ def run_one_test(
     Args:
         code: Python 代码字符串 (从 stdin 读输入，print 到 stdout)
         test_input: 喂给 stdin 的文本，LF/CRLF 按平台换行写入，保留空行
-        expected_output: 期望的 stdout 输出
+        expected_output: 期望的 stdout 文本，LF/CRLF/CR 等价，忽略首尾空白
         timeout: 秒，超时则判为失败
 
     Returns:
@@ -78,9 +78,9 @@ def run_one_test(
     if result.returncode != 0:         # 代码报错 (SyntaxError, RuntimeError 等)
         return False
 
-    # 对比 stdout 和 expected (去首尾空白)
+    # 与 stdout 使用相同的换行归一化，保留内部空行和其他空白。
     actual = stdout.strip()
-    expected = expected_output.strip()
+    expected = expected_output.replace("\r\n", "\n").replace("\r", "\n").strip()
     return actual == expected
 
 

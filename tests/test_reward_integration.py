@@ -112,6 +112,18 @@ class TestRewardSandboxIntegration(unittest.TestCase):
             ]}],
         ), [2 / 3])
 
+    def test_stdio_reward_scores_multiline_expected_answers_consistently(self) -> None:
+        completion = _code_completion("print('first\\nsecond')")
+        self.assertEqual(reward_funcs.code_reward(
+            [completion],
+            verification_info=[{"test_cases": [
+                {"input": "", "output": "first\nsecond\n"},
+                {"input": "", "output": "first\r\nsecond\r\n"},
+                {"input": "", "output": "first\rsecond\r"},
+                {"input": "", "output": "first\r\nwrong\r\n"},
+            ]}],
+        ), [0.75])
+
 
 if __name__ == "__main__":
     unittest.main()

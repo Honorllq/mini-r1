@@ -82,6 +82,30 @@ class TestSandboxInterpreter(unittest.TestCase):
         self.assertTrue(local_sandbox.run_one_test(code, "10\r\n20\r\n", "30"))
         self.assertFalse(local_sandbox.run_one_test(code, "10\r\n20\r\n", "99"))
 
+    def test_stdio_matches_equivalent_expected_line_endings(self) -> None:
+        for newline in ("\n", "\r\n", "\r"):
+            output = f"你好 café{newline}{newline}second{newline}last{newline}"
+            code = f"import sys\nsys.stdout.buffer.write({output.encode('utf-8')!r})"
+            for expected in (
+                "你好 café\n\nsecond\nlast\n",
+                "你好 café\r\n\r\nsecond\r\nlast\r\n",
+                "你好 café\r\rsecond\rlast\r",
+                "你好 café\r\n\nsecond\rlast\n",
+            ):
+                with self.subTest(newline=newline, expected=expected):
+                    self.assertTrue(local_sandbox.run_one_test(code, "", expected))
+
+    def test_stdio_newline_normalization_preserves_content_differences(self) -> None:
+        code = "print('first\\n\\nsecond last')"
+        for expected in (
+            "first\r\nsecond last",  # Missing an internal blank line.
+            "first\r\n\r\nsecond  last",  # Extra internal space.
+            "first\r\n\r\nsecond\tlast",  # A tab is not a space.
+            "first\r\n\r\nwrong",  # Wrong answer.
+        ):
+            with self.subTest(expected=expected):
+                self.assertFalse(local_sandbox.run_one_test(code, "", expected))
+
     def test_stdio_roundtrips_unicode_with_inherited_io_encoding(self) -> None:
         text = "你好 café 😀"
         for encoding in ("utf-8", "ascii", "utf-16"):
