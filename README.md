@@ -102,7 +102,26 @@
 
 ## 🚀 快速开始
 
-### 环境
+### 离线验证（无需 GPU）
+
+如果只想检查代码改动，使用 Python 3.10 或 3.11，在仓库根目录运行：
+
+```bash
+python -m unittest discover -s tests -v
+```
+
+这套测试仅依赖 Python 标准库，无需安装下方训练依赖，也不会下载模型或数据集。
+它覆盖数据转换、训练与评测入口参数、评测结果文件、代码判分和 reward 接口；
+模型、数据集和训练器使用测试替身，判分集成测试则会执行真实的本地 Python 子进程。
+命令应以退出码 0 结束，结果为 `OK`；Python 3.10 会正常跳过一个仅适用于 3.11+ 的语法测试。
+GitHub Actions 的 [Unit tests](.github/workflows/unit-tests.yml) 在 Python 3.10 / 3.11 上运行同一命令。
+
+这些测试不验证真实 GRPO 训练、模型效果或 held-out 泛化能力。
+上述离线套件仅用测试替身检查 `src/test_e2e.py` 的退出状态。
+直接运行 `python src/test_e2e.py` 才会加载真实 HumanEval 数据集，
+使用前 3 道题的官方答案验证判分链路，不运行模型生成。
+
+### 训练与评测环境
 
 ```bash
 conda create -n mini-r1 python=3.10 -y
@@ -146,7 +165,8 @@ mini-r1/
 │   ├── data_prep.py        # HumanEval 数据加载
 │   ├── train.py            # GRPO 训练脚本
 │   ├── evaluate.py         # Pass@1 评测脚本
-│   └── test_e2e.py         # 端到端测试
+│   └── test_e2e.py         # HumanEval 数据集判分链路检查（非模型生成）
+├── tests/                 # 无需 GPU / 下载的离线回归测试
 ├── outputs/
 │   ├── grpo_humaneval_v3/  # 最佳模型 (LoRA adapter)
 │   └── eval/               # 4 个版本的评测 JSON
